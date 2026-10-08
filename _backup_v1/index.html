@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ESA Arcade</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <div class="brand-mark">𓂀</div>
+      <div>
+        <h1>ESA ARCADE</h1>
+        <p>Two players. One keyboard. Extremely serious competition.</p>
+      </div>
+    </header>
+
+    <section id="menuScreen" class="screen">
+      <div class="roster-strip">
+        <span class="roster-title">TODAY'S ROSTER</span>
+        <div class="roster-person"><img src="assets/zima_normal.png" alt="Zima" /><strong>Zima</strong><small>WASD / A S D</small></div>
+        <div class="versus">VS</div>
+        <div class="roster-person"><img src="assets/shaza_normal.png" alt="Shaza" /><strong>Shaza</strong><small>Arrows / J K L</small></div>
+        <span class="future-note">More ESA characters later</span>
+      </div>
+
+      <div class="game-grid">
+        <button class="game-card" data-game="bomb">
+          <span class="game-icon">💣</span>
+          <span class="game-copy"><strong>BOMB PASS</strong><small>Have bomb? Chase. No bomb? RUN.</small></span>
+          <span class="play-pill">PLAY</span>
+        </button>
+
+        <button class="game-card" data-game="coin">
+          <span class="game-icon">🪙</span>
+          <span class="game-copy"><strong>COIN RUSH</strong><small>Grab more coins before the clock hits zero.</small></span>
+          <span class="play-pill">PLAY</span>
+        </button>
+
+        <button class="game-card" data-game="bonk">
+          <span class="game-icon">🔨</span>
+          <span class="game-copy"><strong>BONK BOOTH</strong><small>Hit the matching hole. Do not bonk the bomb.</small></span>
+          <span class="play-pill">PLAY</span>
+        </button>
+      </div>
+
+      <p class="tiny-note">V1 • Local browser game • No installs • No login • Keyboard only</p>
+    </section>
+
+    <section id="gameScreen" class="screen hidden">
+      <div class="game-topbar">
+        <button id="backBtn" class="secondary-btn">← Arcade</button>
+        <div class="game-heading">
+          <strong id="gameTitle">GAME</strong>
+          <span id="gameHint"></span>
+        </div>
+        <button id="restartBtn" class="secondary-btn">Restart</button>
+      </div>
+
+      <div id="instructionPanel" class="instruction-panel hidden">
+        <div id="instructionIcon" class="instruction-icon">💣</div>
+        <h2 id="instructionTitle">Bomb Pass</h2>
+        <p id="instructionText"></p>
+        <div id="instructionControls" class="controls-grid"></div>
+        <button id="startBtn" class="primary-btn">START</button>
+      </div>
+
+      <div id="canvasWrap" class="canvas-wrap hidden">
+        <canvas id="gameCanvas" width="960" height="540" aria-label="ESA Arcade game area"></canvas>
+        <div id="resultOverlay" class="result-overlay hidden">
+          <div class="result-card">
+            <div id="resultKicker" class="result-kicker">MATCH OVER</div>
+            <h2 id="resultTitle">ZIMA WINS!</h2>
+            <p id="resultText"></p>
+            <div class="result-actions">
+              <button id="rematchBtn" class="primary-btn">REMATCH</button>
+              <button id="resultBackBtn" class="secondary-btn">BACK TO ARCADE</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+</html>
