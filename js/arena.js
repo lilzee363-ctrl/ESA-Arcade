@@ -135,6 +135,13 @@
       return c;
     },
 
+    /** Drop cached layers whose key starts with `prefix`, except `keep`. */
+    evictLayers: function (prefix, keep) {
+      for (var k in this._layers) {
+        if (k !== keep && k.indexOf(prefix) === 0) delete this._layers[k];
+      }
+    },
+
     /** Blit a cached layer at logical size. */
     blit: function (ctx, layerCanvas) {
       ctx.drawImage(layerCanvas, 0, 0, W, H);
@@ -273,8 +280,8 @@
   var UI = {
     _countGen: 0,
     _bannerGen: 0,
-    _scores: { zima: null, shaza: null },
-    _wins: { zima: 0, shaza: 0 },
+    _scores: { p1: null, p2: null },
+    _wins: { p1: 0, p2: 0 },
 
     el: {},
 
@@ -286,20 +293,20 @@
         label: id("hudLabel"),
         value: id("hudValue"),
         center: id("hudCenter"),
-        scoreZima: id("scoreZima"),
-        scoreShaza: id("scoreShaza"),
-        pipsZima: id("pipsZima"),
-        pipsShaza: id("pipsShaza"),
-        keysZima: id("keysZima"),
-        keysShaza: id("keysShaza"),
+        hud: { p1: id("hudP1"), p2: id("hudP2") },
+        face: { p1: id("faceP1"), p2: id("faceP2") },
+        name: { p1: id("nameP1"), p2: id("nameP2") },
+        score: { p1: id("scoreP1"), p2: id("scoreP2") },
+        pips: { p1: id("pipsP1"), p2: id("pipsP2") },
+        keys: { p1: id("keysP1"), p2: id("keysP2") },
         result: id("resultOverlay"),
+        resultActions: id("resultActions"),
         resultTitle: id("resultTitle"),
         resultKicker: id("resultKicker"),
         resultText: id("resultText"),
         resultPortrait: id("resultPortrait"),
         resultPortraitImg: id("resultPortraitImg"),
-        resultScoreZima: id("resultScoreZima"),
-        resultScoreShaza: id("resultScoreShaza"),
+        resultScore: { p1: id("resultScoreP1"), p2: id("resultScoreP2") },
         playTitle: id("playTitle"),
         playMode: id("playMode")
       };
@@ -307,27 +314,34 @@
 
     /* --- HUD ------------------------------------------------------- */
 
-    /** Configure the HUD for a game. `pips` > 0 shows round markers. */
+    /**
+     * Configure the HUD for a game. `pips` > 0 shows round markers.
+     * cfg.players = ESA.describeMatchup(setup); cfg.scheme = control scheme.
+     */
     configure: function (cfg) {
+      var self = this;
       this.el.playTitle.textContent = cfg.title;
       this.el.playMode.textContent = cfg.mode || "";
-      this.el.keysZima.textContent = cfg.keysZima;
-      this.el.keysShaza.textContent = cfg.keysShaza;
       this.el.label.textContent = cfg.centerLabel || "";
       this.el.value.textContent = cfg.centerValue || "—";
       this.el.center.classList.remove("is-urgent");
+      this._players = cfg.players;
 
-      this._scores.zima = null;
-      this._scores.shaza = null;
-      this.setScore("zima", 0);
-      this.setScore("shaza", 0);
-
-      this._buildPips("zima", cfg.pips || 0);
-      this._buildPips("shaza", cfg.pips || 0);
+      ESA.SLOTS.forEach(function (slot) {
+        var who = cfg.players[slot];
+        self.el.hud[slot].style.setProperty("--pc", who.color);
+        ESA.setArt(self.el.face[slot], who.character, "normal", "head");
+        self.el.name[slot].textContent = who.name;
+        self.el.keys[slot].textContent = ESA.CONTROLS[slot].short + " · " +
+                                         ESA.controlsFor(slot, cfg.scheme).text;
+        self._scores[slot] = null;
+        self.setScore(slot, 0);
+        self._buildPips(slot, cfg.pips || 0);
+      });
     },
 
     _buildPips: function (side, count) {
-      var host = side === "zima" ? this.el.pipsZima : this.el.pipsShaza;
+      var host = this.el.pips[side];
       host.innerHTML = "";
       this._wins[side] = 0;
       for (var i = 0; i < count; i++) {
@@ -339,7 +353,7 @@
 
     /** Animates the number whenever it actually changes. */
     setScore: function (side, value) {
-      var el = side === "zima" ? this.el.scoreZima : this.el.scoreShaza;
+      var el = this.el.score[side];
       var prev = this._scores[side];
       if (prev === value) return;
 
@@ -354,7 +368,7 @@
     },
 
     setWins: function (side, wins) {
-      var host = side === "zima" ? this.el.pipsZima : this.el.pipsShaza;
+      var host = this.el.pips[side];
       var pips = host.children;
       for (var i = 0; i < pips.length; i++) {
         var on = i < wins;
@@ -469,23 +483,40 @@
     /* --- Result ----------------------------------------------------- */
 
     /**
-     * @param {object} r  { winnerId|null, kicker, title, text, zima, shaza }
+     * @param {object} r        { winner: "p1"|"p2"|null, kicker, title, text, scores }
+     * @param {Array}  actions  [{ label, kind: "gold"|"ghost", onClick }]
+     *                          The first action is the Enter default.
      */
-    showResult: function (r) {
+    showResult: function (r, actions) {
       var e = this.el;
+      var players = this._players;
       e.resultKicker.textContent = r.kicker || "Match Over";
       e.resultTitle.textContent = r.title;
       e.resultText.textContent = r.text || "";
-      e.resultScoreZima.textContent = r.zima;
-      e.resultScoreShaza.textContent = r.shaza;
+      ESA.SLOTS.forEach(function (slot) {
+        e.resultScore[slot].textContent = r.scores ? r.scores[slot] : 0;
+        if (players) e.resultScore[slot].style.color = players[slot].color;
+      });
 
-      if (r.winnerId) {
+      if (r.winner && players) {
+        var champ = players[r.winner].character;
         e.resultPortrait.classList.remove("is-draw");
-        e.resultPortraitImg.src = ESA.characters[r.winnerId].normalSrc;
+        ESA.setArt(e.resultPortraitImg, champ, "normal", "head");
       } else {
         e.resultPortrait.classList.add("is-draw");
         e.resultPortraitImg.src = "assets/Branding/Golden Canadian Pharaoh Emblem.png";
+        e.resultPortraitImg.setAttribute("style", "width:100%;height:100%;object-fit:contain");
       }
+
+      e.resultActions.innerHTML = "";
+      (actions || []).forEach(function (a, i) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn " + (a.kind === "gold" ? "btn-gold" : "btn-ghost") + (i === 0 ? " is-default" : "");
+        b.innerHTML = a.label + (i === 0 ? ' <span class="kbd-hint">Enter</span>' : "");
+        b.addEventListener("click", a.onClick);
+        e.resultActions.appendChild(b);
+      });
 
       e.result.classList.remove("hidden");
       // Restart the entrance animation on a rematch -> result cycle.
@@ -495,6 +526,13 @@
 
     hideResult: function () {
       this.el.result.classList.add("hidden");
+      if (this.el.resultActions) this.el.resultActions.innerHTML = "";
+    },
+
+    /** Activates the default (first) result action - Enter on the result card. */
+    triggerDefaultResult: function () {
+      var b = this.el.resultActions && this.el.resultActions.firstElementChild;
+      if (b) b.click();
     },
 
     isResultVisible: function () {

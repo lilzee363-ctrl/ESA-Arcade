@@ -41,31 +41,58 @@ window.ESA = window.ESA || {};
    * Every setTimeout/setInterval in the project belongs to a group so it
    * can be cancelled wholesale. This is what keeps rapid
    * play -> back -> play -> rematch cycles from stacking timers.
+   *
+   * Timeouts can also be paused and resumed (the in-game pause menu), so
+   * a countdown or round banner never advances behind the pause overlay.
    * ------------------------------------------------------------------ */
   function TimerGroup() {
-    this._timeouts = [];
+    this._timeouts = [];      // { id, fn, due, remaining }
     this._intervals = [];
+    this._paused = false;
   }
-  TimerGroup.prototype.after = function (ms, fn) {
+  TimerGroup.prototype._schedule = function (entry, ms) {
     var self = this;
-    var id = setTimeout(function () {
-      var i = self._timeouts.indexOf(id);
+    entry.due = performance.now() + ms;
+    entry.id = setTimeout(function () {
+      var i = self._timeouts.indexOf(entry);
       if (i >= 0) self._timeouts.splice(i, 1);
-      fn();
+      entry.fn();
     }, ms);
-    this._timeouts.push(id);
-    return id;
+  };
+  TimerGroup.prototype.after = function (ms, fn) {
+    var entry = { id: 0, fn: fn, due: 0, remaining: ms };
+    this._timeouts.push(entry);
+    if (!this._paused) this._schedule(entry, ms);
+    return entry;
   };
   TimerGroup.prototype.every = function (ms, fn) {
     var id = setInterval(fn, ms);
     this._intervals.push(id);
     return id;
   };
+  /** Freeze every pending timeout, remembering how long each had left. */
+  TimerGroup.prototype.pause = function () {
+    if (this._paused) return;
+    this._paused = true;
+    var now = performance.now();
+    for (var i = 0; i < this._timeouts.length; i++) {
+      var e = this._timeouts[i];
+      clearTimeout(e.id);
+      e.remaining = Math.max(0, e.due - now);
+    }
+  };
+  TimerGroup.prototype.resume = function () {
+    if (!this._paused) return;
+    this._paused = false;
+    var pending = this._timeouts.slice();
+    for (var i = 0; i < pending.length; i++) this._schedule(pending[i], pending[i].remaining);
+  };
   TimerGroup.prototype.clear = function () {
-    for (var i = 0; i < this._timeouts.length; i++) clearTimeout(this._timeouts[i]);
+    for (var i = 0; i < this._timeouts.length; i++) clearTimeout(this._timeouts[i].id);
     for (var j = 0; j < this._intervals.length; j++) clearInterval(this._intervals[j]);
     this._timeouts.length = 0;
     this._intervals.length = 0;
+    this._paused = false;
   };
   ESA.TimerGroup = TimerGroup;
 
@@ -234,6 +261,40 @@ window.ESA = window.ESA || {};
         case "draw":
           A.tone({ freq: 440, dur: .14, type: "triangle", gain: .05 });
           A.tone({ freq: 392, dur: .26, type: "triangle", gain: .05, delay: .14 });
+          break;
+        /* --- V3 menu + ceremony hooks --------------------------------- */
+        case "uiMove":      A.tone({ freq: 520, dur: .035, type: "square", gain: .022 }); break;
+        case "lockIn":
+          A.tone({ freq: 392, dur: .06, type: "square", gain: .045 });
+          A.tone({ freq: 784, dur: .14, type: "square", gain: .045, delay: .05 });
+          break;
+        case "unlock":      A.tone({ freq: 600, to: 330, dur: .1, type: "square", gain: .03 }); break;
+        case "denied":      A.tone({ freq: 160, dur: .12, type: "square", gain: .035 }); break;
+        case "toggleOn":    A.tone({ freq: 660, to: 990, dur: .06, type: "square", gain: .03 }); break;
+        case "toggleOff":   A.tone({ freq: 500, to: 330, dur: .06, type: "square", gain: .025 }); break;
+        case "pause":       A.tone({ freq: 700, to: 350, dur: .12, type: "triangle", gain: .05 }); break;
+        case "resume":      A.tone({ freq: 350, to: 700, dur: .12, type: "triangle", gain: .05 }); break;
+        case "whoosh":      A.noise({ dur: .28, freq: 600, freqTo: 2600, filter: "bandpass", gain: .06, decay: 1.4 }); break;
+        case "reelTick":    A.tone({ freq: 1250, dur: .018, type: "square", gain: .018 }); break;
+        case "slam":
+          A.noise({ dur: .25, freq: 900, freqTo: 80, gain: .14, decay: 2 });
+          A.tone({ freq: 196, to: 98, dur: .2, type: "square", gain: .06 });
+          break;
+        case "reveal":
+          A.tone({ freq: 659, dur: .09, type: "square", gain: .045 });
+          A.tone({ freq: 988, dur: .22, type: "square", gain: .045, delay: .08 });
+          break;
+        case "versus":
+          A.noise({ dur: .35, freq: 300, freqTo: 3000, filter: "bandpass", gain: .08, decay: 1.2 });
+          A.tone({ freq: 110, to: 220, dur: .32, type: "sawtooth", gain: .05 });
+          break;
+        case "fanfare":
+          A.tone({ freq: 523, dur: .12, type: "square", gain: .05 });
+          A.tone({ freq: 659, dur: .12, type: "square", gain: .05, delay: .12 });
+          A.tone({ freq: 784, dur: .12, type: "square", gain: .05, delay: .24 });
+          A.tone({ freq: 1046, dur: .18, type: "square", gain: .055, delay: .36 });
+          A.tone({ freq: 784, dur: .1, type: "square", gain: .045, delay: .56 });
+          A.tone({ freq: 1046, dur: .5, type: "square", gain: .06, delay: .68 });
           break;
         default: break;
       }

@@ -4,32 +4,42 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ESA Arcade</title>
-  <meta name="description" content="ESA Arcade - a two-player party game collection for the Egyptian Students Association." />
+  <meta name="description" content="ESA Arcade - a two-player party game collection and tournament for the Egyptian Students Association." />
   <link rel="icon" href="assets/Branding/Golden Canadian Pharaoh Emblem.png" />
   <link rel="stylesheet" href="css/tokens.css" />
   <link rel="stylesheet" href="css/arcade.css" />
+  <link rel="stylesheet" href="css/menus.css" />
+  <link rel="stylesheet" href="css/tournament.css" />
 </head>
 <body>
 
   <!-- ====================================================================
-       Ambient background. Persists behind every screen.
+       Ambient background. Persists behind every screen; frozen in gameplay.
        ==================================================================== -->
   <div id="ambient" aria-hidden="true">
     <div class="amb-pattern"></div>
     <div class="amb-glow"></div>
+    <div class="amb-floor"><div class="amb-grid"></div></div>
     <div class="amb-sweep"></div>
     <div class="amb-dust" id="ambDust"></div>
     <div class="amb-vignette"></div>
   </div>
 
+  <!-- Cabinet bezel: gold frame + marquee bulbs around the whole viewport. -->
+  <div id="bezel" aria-hidden="true">
+    <div class="bezel-bulbs" id="bezelBulbs"></div>
+    <i class="bz-corner tl"></i><i class="bz-corner tr"></i>
+    <i class="bz-corner bl"></i><i class="bz-corner br"></i>
+  </div>
+
   <!-- ====================================================================
-       Reusable SVG symbols for the game icons.
+       Reusable SVG symbols.
        ==================================================================== -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
     <defs>
       <!-- Bomb -->
       <symbol id="icoBomb" viewBox="0 0 100 100">
-        <g class="art-move">
+        <g>
           <path d="M62 24l6-10 9 5-6 10" fill="none" stroke="#c0871f" stroke-width="5" stroke-linecap="round"/>
           <circle cx="79" cy="17" r="6" fill="#f3c35a"/>
           <circle cx="79" cy="17" r="10" fill="#f3c35a" opacity=".3"/>
@@ -43,7 +53,7 @@
 
       <!-- Mallet -->
       <symbol id="icoMallet" viewBox="0 0 100 100">
-        <g class="art-move">
+        <g>
           <rect x="44" y="40" width="12" height="48" rx="6" transform="rotate(18 50 64)" fill="#8e6314"/>
           <rect x="44" y="40" width="12" height="48" rx="6" transform="rotate(18 50 64)" fill="none" stroke="#5c400c" stroke-width="2"/>
           <rect x="18" y="16" width="64" height="34" rx="11" transform="rotate(18 50 33)" fill="#f3c35a"/>
@@ -52,133 +62,173 @@
           <path d="M84 56l9-5M86 66l10 1M78 46l5-9" stroke="#f3c35a" stroke-width="4" stroke-linecap="round" opacity=".8"/>
         </g>
       </symbol>
+
+      <!-- Trophy -->
+      <symbol id="icoTrophy" viewBox="0 0 100 100">
+        <path d="M30 14h40v20a20 20 0 0 1-40 0z" fill="#f3c35a" stroke="#c0871f" stroke-width="3"/>
+        <path d="M30 20H17a11 11 0 0 0 13 18M70 20h13a11 11 0 0 1-13 18" fill="none" stroke="#c0871f" stroke-width="5" stroke-linecap="round"/>
+        <rect x="45" y="53" width="10" height="16" fill="#c0871f"/>
+        <path d="M33 69h34l5 13H28z" fill="#e5a92f" stroke="#8e6314" stroke-width="2.5" stroke-linejoin="round"/>
+        <rect x="24" y="82" width="52" height="8" rx="2" fill="#8e6314"/>
+        <path d="M38 22v12a12 12 0 0 0 6 10" fill="none" stroke="#fdeec4" stroke-width="4" stroke-linecap="round" opacity=".7"/>
+        <path d="M50 22l3 6 6 1-4.5 4 1 6-5.5-3-5.5 3 1-6-4.5-4 6-1z" fill="#fff6e4" opacity=".9"/>
+      </symbol>
+
+      <!-- Two players -->
+      <symbol id="icoVersus" viewBox="0 0 100 100">
+        <circle cx="30" cy="34" r="13" fill="#4aa3ff"/>
+        <path d="M10 78a20 20 0 0 1 40 0z" fill="#4aa3ff"/>
+        <circle cx="70" cy="34" r="13" fill="#ff6a5c"/>
+        <path d="M50 78a20 20 0 0 1 40 0z" fill="#ff6a5c"/>
+        <path d="M44 50l12 0" stroke="#f3c35a" stroke-width="5" stroke-linecap="round"/>
+      </symbol>
+
+      <!-- Bracket -->
+      <symbol id="icoBracket" viewBox="0 0 100 100">
+        <g fill="none" stroke="#f3c35a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 18h20v20H10M10 62h20v20H10M30 28h14v44H30M44 50h18"/>
+        </g>
+        <circle cx="76" cy="50" r="13" fill="#f3c35a"/>
+        <path d="M76 43l2 4.5 5 .6-3.6 3.3 1 4.9-4.4-2.5-4.4 2.5 1-4.9-3.6-3.3 5-.6z" fill="#5c400c"/>
+      </symbol>
     </defs>
   </svg>
 
   <div id="app">
 
     <!-- ==================================================================
-         TITLE SCREEN
+         WELCOME / BOOT
          ================================================================== -->
-    <section id="titleScreen" class="screen" aria-label="Title screen">
-      <div class="title-inner">
-        <div class="title-emblem">
-          <img src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" />
+    <section id="welcomeScreen" class="screen" aria-label="Welcome">
+      <div class="welcome-inner">
+        <div class="welcome-emblem" id="welcomeEmblem">
+          <span class="emblem-glow"></span>
+          <span class="emblem-legs" aria-hidden="true"><i class="leg l"></i><i class="leg r"></i></span>
+          <img src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="ESA emblem" />
         </div>
-        <h1 class="title-wordmark">ESA Arcade</h1>
-        <div class="rule title-rule"></div>
-        <p class="title-sub">Egyptian Students Association</p>
-        <button class="title-prompt" id="startPrompt" type="button">Press Enter to Start</button>
+        <div class="welcome-kicker">The Egyptian Students Association presents</div>
+        <h1 class="welcome-wordmark" data-text="ESA ARCADE">ESA ARCADE</h1>
+        <div class="rule welcome-rule"></div>
+        <button class="press-start" id="pressStart" type="button">
+          <span class="ps-blink">Press Start</span>
+          <span class="keycap">Enter</span>
+        </button>
       </div>
-      <p class="title-foot">Two players &middot; One keyboard &middot; Extremely serious competition</p>
+      <div class="welcome-foot">
+        <span class="wf-credit">Credit 00 &middot; Free Play</span>
+        <span class="wf-ticker" id="welcomeTicker">Two players &middot; One keyboard &middot; Extremely serious competition</span>
+        <span class="wf-ver">V3</span>
+      </div>
     </section>
 
     <!-- ==================================================================
-         ARCADE MENU
+         MODE SELECT
          ================================================================== -->
-    <section id="menuScreen" class="screen" aria-label="Game selection">
-      <div class="menu-inner stagger">
-
-        <header class="arc-header">
-          <img class="arc-mark" src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="ESA emblem" />
-          <div>
-            <div class="arc-title">ESA Arcade</div>
-            <div class="arc-tag">Choose your machine</div>
-          </div>
-          <div class="spacer"></div>
-          <button class="sound-btn" id="soundBtn" type="button" aria-label="Toggle sound">
-            <svg class="icon-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 2.2v2.1a7.8 7.8 0 0 1 0 15.4v2.1a9.9 9.9 0 0 0 0-19.6z"/></svg>
-            <svg class="icon-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm15.6 3l2.4-2.4-1.4-1.4L18.2 10.6 15.8 8.2l-1.4 1.4 2.4 2.4-2.4 2.4 1.4 1.4 2.4-2.4 2.4 2.4 1.4-1.4z"/></svg>
-          </button>
+    <section id="modeScreen" class="screen has-topbar" aria-label="Mode select">
+      <div class="mode-inner">
+        <header class="screen-head">
+          <span class="px-arrow left" aria-hidden="true"></span>
+          <h2 class="screen-title">Select Mode</h2>
+          <span class="px-arrow right" aria-hidden="true"></span>
         </header>
-
-        <div class="roster">
-          <span class="roster-label">Today&rsquo;s Roster</span>
-          <div class="roster-person" style="--pc: var(--zima)">
-            <img src="assets/zima_normal.png" alt="" />
-            <div><b>Zima</b><span>WASD &middot; A S D</span></div>
-          </div>
-          <span class="roster-vs">VS</span>
-          <div class="roster-person" style="--pc: var(--shaza)">
-            <img src="assets/shaza_normal.png" alt="" />
-            <div><b>Shaza</b><span>Arrows &middot; J K L</span></div>
-          </div>
-          <span class="roster-note">More ESA members<br />joining later</span>
+        <div class="mode-grid" id="modeGrid">
+          <button class="mode-card" data-mode="casual" type="button">
+            <span class="mc-marquee"><span class="mc-bulbs"></span><span class="mc-title">Casual</span></span>
+            <span class="mc-screen"><svg viewBox="0 0 100 100"><use href="#icoVersus" /></svg></span>
+            <span class="mc-lines">
+              <span>Quick local matches</span>
+              <span>Choose 2 characters</span>
+              <span>Play any machine</span>
+            </span>
+            <span class="mc-cta">&#9654; Press Enter</span>
+          </button>
+          <button class="mode-card" data-mode="tournament" type="button">
+            <span class="mc-marquee"><span class="mc-bulbs"></span><span class="mc-title">Tournament</span></span>
+            <span class="mc-screen"><svg viewBox="0 0 100 100"><use href="#icoTrophy" /></svg></span>
+            <span class="mc-lines">
+              <span>ESA team-bonding championship</span>
+              <span>Everyone present plays</span>
+              <span>League stage + knockouts</span>
+            </span>
+            <span class="mc-cta">&#9654; Press Enter</span>
+          </button>
         </div>
+        <p class="nav-hint"><b>&larr; &rarr;</b> choose &middot; <b>Enter</b> select &middot; <b>Esc</b> back</p>
+      </div>
+    </section>
 
-        <div class="cards" id="cardGrid">
-
-          <button class="card" data-game="bomb" style="--accent: #e8584f" type="button">
-            <span class="card-no">Machine 01</span>
-            <span class="card-art"><svg class="art-move" viewBox="0 0 100 100"><use href="#icoBomb" /></svg></span>
-            <span class="card-title">Bomb Pass</span>
-            <span class="card-desc">Holding it? Chase. Not holding it? Run. The fuse is hidden.</span>
-            <span class="card-keys">
-              <span class="who">Zima</span>
-              <span class="row">
-                <span class="keycap">W</span><span class="keycap">A</span><span class="keycap">S</span><span class="keycap">D</span>
-              </span>
-              <span class="divider"></span>
-              <span class="who">Shaza</span>
-              <span class="row"><span class="keycap wide">Arrows</span></span>
-            </span>
-          </button>
-
-          <button class="card" data-game="coin" style="--accent: #f3c35a" type="button">
-            <span class="card-no">Machine 02</span>
-            <span class="card-art">
-              <img class="art-move" src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" style="width:100%;height:100%;object-fit:contain" />
-            </span>
-            <span class="card-title">Coin Rush</span>
-            <span class="card-desc">Sixty seconds. Collect ESA tokens. Golden ones are worth three.</span>
-            <span class="card-keys">
-              <span class="who">Zima</span>
-              <span class="row">
-                <span class="keycap">W</span><span class="keycap">A</span><span class="keycap">S</span><span class="keycap">D</span>
-              </span>
-              <span class="divider"></span>
-              <span class="who">Shaza</span>
-              <span class="row"><span class="keycap wide">Arrows</span></span>
-            </span>
-          </button>
-
-          <button class="card" data-game="bonk" style="--accent: #4fb7c9" type="button">
-            <span class="card-no">Machine 03</span>
-            <span class="card-art"><svg class="art-move" viewBox="0 0 100 100"><use href="#icoMallet" /></svg></span>
-            <span class="card-title">Bonk Booth</span>
-            <span class="card-desc">Your rival pops out of three holes. Hit the matching key. Skip the bombs.</span>
-            <span class="card-keys">
-              <span class="who">Zima</span>
-              <span class="row">
-                <span class="keycap">A</span><span class="keycap">S</span><span class="keycap">D</span>
-              </span>
-              <span class="divider"></span>
-              <span class="who">Shaza</span>
-              <span class="row">
-                <span class="keycap">J</span><span class="keycap">K</span><span class="keycap">L</span>
-              </span>
-            </span>
-          </button>
-
+    <!-- ==================================================================
+         CASUAL CHARACTER SELECT
+         ================================================================== -->
+    <section id="charSelectScreen" class="screen has-topbar" aria-label="Character select">
+      <div class="cs-inner">
+        <header class="screen-head">
+          <span class="px-arrow left" aria-hidden="true"></span>
+          <h2 class="screen-title">Choose Your Fighter</h2>
+          <span class="px-arrow right" aria-hidden="true"></span>
+        </header>
+        <div class="cs-stage">
+          <div class="cs-side" id="csSideP1" data-slot="p1"></div>
+          <div class="cs-roster-wrap">
+            <div class="cs-roster" id="csRoster"></div>
+          </div>
+          <div class="cs-side" id="csSideP2" data-slot="p2"></div>
         </div>
+        <p class="nav-hint" id="csHint"><b>Mouse:</b> click a fighter to lock in P1, then P2 &middot; <b>Esc</b> back</p>
+      </div>
+    </section>
 
-        <p class="menu-hint"><b>&larr; &rarr;</b> to browse &middot; <b>Enter</b> to play</p>
+    <!-- ==================================================================
+         VS PRESENTATION
+         ================================================================== -->
+    <section id="vsScreen" class="screen has-topbar vs-screen" aria-label="Versus">
+      <div class="vs-half p1" id="vsP1"></div>
+      <div class="vs-half p2" id="vsP2"></div>
+      <div class="vs-center">
+        <img class="vs-emblem" src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" />
+        <span class="vs-word">VS</span>
+      </div>
+      <div class="vs-flash"></div>
+    </section>
+
+    <!-- ==================================================================
+         GAME LIBRARY
+         ================================================================== -->
+    <section id="libraryScreen" class="screen has-topbar" aria-label="Game library">
+      <div class="lib-inner">
+        <div class="lib-top">
+          <div class="matchup" id="libMatchup"></div>
+          <button class="btn btn-ghost btn-small" id="changePlayersBtn" type="button">Change Players <span class="kbd-hint">C</span></button>
+        </div>
+        <header class="screen-head lib-head">
+          <h2 class="screen-title">Arcade Floor</h2>
+          <span class="lib-count" id="libCount">01 / 03</span>
+        </header>
+        <div class="lib-floor">
+          <button class="px-nav prev" id="libPrev" type="button" aria-label="Previous game"><span class="px-arrow left"></span></button>
+          <div class="lib-carousel" id="libCarousel"></div>
+          <button class="px-nav next" id="libNext" type="button" aria-label="Next game"><span class="px-arrow right"></span></button>
+        </div>
+        <div class="lib-dots" id="libDots"></div>
+        <p class="nav-hint"><b>&larr; &rarr;</b> or <b>A D</b> browse &middot; <b>Enter</b> play &middot; <b>C</b> change players &middot; <b>Esc</b> back</p>
       </div>
     </section>
 
     <!-- ==================================================================
          GAME INTRO
          ================================================================== -->
-    <section id="introScreen" class="screen" aria-label="Game briefing">
-      <div class="intro-inner panel panel-corners stagger">
+    <section id="introScreen" class="screen has-topbar" aria-label="Game briefing">
+      <div class="intro-inner panel panel-corners">
+        <div class="intro-kicker" id="introKicker">Casual Match</div>
         <div class="intro-art" id="introArt"></div>
         <h2 id="introTitle">Bomb Pass</h2>
+        <div class="intro-mode" id="introMode"></div>
         <div class="rule intro-rule"></div>
         <p class="intro-rules" id="introRules"></p>
         <div class="intro-controls" id="introControls"></div>
         <div class="intro-actions">
-          <button class="btn btn-ghost btn-small" id="introBackBtn" type="button">Back</button>
-          <button class="btn btn-gold" id="introStartBtn" type="button">Start Match</button>
+          <button class="btn btn-ghost btn-small" id="introBackBtn" type="button">&larr; Back</button>
+          <button class="btn btn-gold" id="introStartBtn" type="button">Start Match <span class="kbd-hint">Enter</span></button>
         </div>
       </div>
     </section>
@@ -190,23 +240,23 @@
       <div class="stage">
 
         <div class="play-bar">
-          <button class="btn btn-ghost btn-small" id="playBackBtn" type="button">&larr; Arcade</button>
+          <button class="btn btn-ghost btn-small pause-btn" id="pauseBtn" type="button">&#10074;&#10074; Pause <span class="kbd-hint">Esc</span></button>
           <span class="game-name" id="playTitle">Bomb Pass</span>
           <span class="game-mode" id="playMode"></span>
           <span class="spacer"></span>
-          <button class="btn btn-ghost btn-small" id="playRestartBtn" type="button">Restart</button>
+          <span class="play-tag hidden" id="playTag"></span>
         </div>
 
         <div class="hud">
-          <div class="hud-player" id="hudZima" style="--pc: var(--zima)">
-            <img class="hud-face" src="assets/zima_normal.png" alt="" />
+          <div class="hud-player" id="hudP1">
+            <span class="hud-face"><img id="faceP1" src="assets/zima_normal.png" alt="" /></span>
             <span class="hud-meta">
-              <span class="hud-name">Zima</span>
-              <span class="hud-keys" id="keysZima">W A S D</span>
+              <span class="hud-name" id="nameP1">Player 1</span>
+              <span class="hud-keys" id="keysP1">W A S D</span>
             </span>
             <span class="hud-tail">
-              <span class="hud-pips" id="pipsZima"></span>
-              <span class="hud-score" id="scoreZima">0</span>
+              <span class="hud-pips" id="pipsP1"></span>
+              <span class="hud-score" id="scoreP1">0</span>
             </span>
           </div>
 
@@ -215,15 +265,15 @@
             <span class="hud-value" id="hudValue">&mdash;</span>
           </div>
 
-          <div class="hud-player is-right" id="hudShaza" style="--pc: var(--shaza)">
-            <img class="hud-face" src="assets/shaza_normal.png" alt="" />
+          <div class="hud-player is-right" id="hudP2">
+            <span class="hud-face"><img id="faceP2" src="assets/shaza_normal.png" alt="" /></span>
             <span class="hud-meta">
-              <span class="hud-name">Shaza</span>
-              <span class="hud-keys" id="keysShaza">Arrow Keys</span>
+              <span class="hud-name" id="nameP2">Player 2</span>
+              <span class="hud-keys" id="keysP2">Arrow Keys</span>
             </span>
             <span class="hud-tail">
-              <span class="hud-pips" id="pipsShaza"></span>
-              <span class="hud-score" id="scoreShaza">0</span>
+              <span class="hud-pips" id="pipsP2"></span>
+              <span class="hud-score" id="scoreP2">0</span>
             </span>
           </div>
         </div>
@@ -236,20 +286,17 @@
           <div class="result-overlay hidden" id="resultOverlay">
             <div class="result-card">
               <div class="result-portrait" id="resultPortrait">
-                <img src="assets/zima_normal.png" alt="" id="resultPortraitImg" />
+                <span class="rp-crop"><img src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" id="resultPortraitImg" /></span>
               </div>
               <div class="result-kicker" id="resultKicker">Match Over</div>
-              <h2 id="resultTitle">Zima Wins</h2>
+              <h2 id="resultTitle">Winner</h2>
               <div class="result-score">
-                <span class="sc zima" id="resultScoreZima">0</span>
+                <span class="sc" id="resultScoreP1">0</span>
                 <i>&ndash;</i>
-                <span class="sc shaza" id="resultScoreShaza">0</span>
+                <span class="sc" id="resultScoreP2">0</span>
               </div>
               <p class="result-text" id="resultText"></p>
-              <div class="result-actions">
-                <button class="btn btn-gold" id="rematchBtn" type="button">Rematch</button>
-                <button class="btn btn-ghost" id="resultBackBtn" type="button">Back to Arcade</button>
-              </div>
+              <div class="result-actions" id="resultActions"></div>
             </div>
           </div>
         </div>
@@ -257,17 +304,217 @@
       </div>
     </section>
 
+    <!-- ==================================================================
+         TOURNAMENT - PARTICIPANT SELECT
+         ================================================================== -->
+    <section id="participantScreen" class="screen has-topbar" aria-label="Tournament participants">
+      <div class="ps-inner">
+        <header class="screen-head">
+          <span class="px-arrow left" aria-hidden="true"></span>
+          <h2 class="screen-title">Who&rsquo;s Playing?</h2>
+          <span class="px-arrow right" aria-hidden="true"></span>
+        </header>
+        <p class="screen-sub">Select every ESA member physically here for the championship.</p>
+        <div class="ps-roster-wrap"><div class="ps-roster" id="psRoster"></div></div>
+        <div class="ps-note hidden" id="psNote"></div>
+        <div class="ps-bar">
+          <div class="ps-count"><b id="psCount">0</b><span id="psCountLabel">Players selected</span></div>
+          <div class="ps-format" id="psFormat"></div>
+          <div class="ps-actions">
+            <button class="btn btn-ghost btn-small" id="psAllBtn" type="button">Select All</button>
+            <button class="btn btn-gold" id="psStartBtn" type="button">Start Tournament <span class="kbd-hint">Enter</span></button>
+          </div>
+        </div>
+        <p class="nav-hint"><b>Arrows</b> move &middot; <b>Space</b> toggle &middot; <b>Enter</b> start &middot; <b>Esc</b> back</p>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - INTRO / FORMAT REVEAL
+         ================================================================== -->
+    <section id="tourIntroScreen" class="screen has-topbar" aria-label="Tournament introduction">
+      <div class="ti-inner">
+        <div class="ti-kicker">ESA Arcade presents</div>
+        <h2 class="ti-title">The ESA Arcade<br /><span>Championship</span></h2>
+        <div class="ti-faces" id="tiFaces"></div>
+        <div class="ti-format" id="tiFormat"></div>
+        <p class="ti-rules">Win <b>3</b> &middot; Tie <b>1</b> &middot; Loss <b>0</b> &middot; Bye <b>3</b> &mdash; ties broken by wins, then score difference, then a draw of lots.</p>
+        <button class="btn btn-gold" id="tiBeginBtn" type="button">Begin Tournament <span class="kbd-hint">Enter</span></button>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - HUB
+         ================================================================== -->
+    <section id="hubScreen" class="screen has-topbar" aria-label="Tournament hub">
+      <div class="hub-inner">
+        <header class="hub-head">
+          <div class="hub-phase" id="hubPhase">League Stage</div>
+          <h2 class="hub-title" id="hubTitle">Round 1</h2>
+          <div class="hub-progress" id="hubProgress"></div>
+        </header>
+        <div class="hub-grid">
+          <div class="hub-panel hub-round" id="hubRound"></div>
+          <div class="hub-panel hub-side" id="hubSide"></div>
+        </div>
+        <div class="hub-actions">
+          <button class="btn btn-ghost btn-small" id="hubViewBtn" type="button">View Standings</button>
+          <button class="btn btn-gold btn-big" id="hubNextBtn" type="button">Continue <span class="kbd-hint">Enter</span></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - GAME DRAW
+         ================================================================== -->
+    <section id="drawScreen" class="screen has-topbar" aria-label="Game draw">
+      <div class="draw-inner">
+        <div class="draw-kicker" id="drawKicker">Round 1</div>
+        <h2 class="draw-title">Game Draw</h2>
+        <div class="draw-machine">
+          <div class="draw-window">
+            <div class="draw-reel" id="drawReel"></div>
+            <div class="draw-selector"><i></i><i></i></div>
+          </div>
+        </div>
+        <div class="draw-excluded hidden" id="drawExcluded"></div>
+        <div class="draw-result" id="drawResult">
+          <div class="dr-kicker" id="drawResultKicker">Round 1 Game</div>
+          <div class="dr-title" id="drawResultTitle"></div>
+          <div class="dr-sub" id="drawResultSub"></div>
+        </div>
+        <button class="btn btn-gold" id="drawContinueBtn" type="button">Skip <span class="kbd-hint">Enter</span></button>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - FIXTURE REVEAL
+         ================================================================== -->
+    <section id="fixtureScreen" class="screen has-topbar" aria-label="Fixtures">
+      <div class="fx-inner">
+        <div class="fx-kicker" id="fxKicker">League Stage</div>
+        <h2 class="fx-title" id="fxTitle">Round 1 Fixtures</h2>
+        <div class="fx-game" id="fxGame"></div>
+        <div class="fx-shuffle" id="fxShuffle"></div>
+        <div class="fx-list" id="fxList"></div>
+        <button class="btn btn-gold" id="fxContinueBtn" type="button">Continue <span class="kbd-hint">Enter</span></button>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - STANDINGS
+         ================================================================== -->
+    <section id="standingsScreen" class="screen has-topbar" aria-label="Standings">
+      <div class="st-inner">
+        <div class="st-kicker" id="stKicker">League Stage</div>
+        <h2 class="st-title" id="stTitle">Standings</h2>
+        <div class="st-table-wrap"><div class="st-table" id="stTable"></div></div>
+        <div class="st-banner hidden" id="stBanner"></div>
+        <button class="btn btn-gold" id="stContinueBtn" type="button">Continue <span class="kbd-hint">Enter</span></button>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - KNOCKOUT BRACKET
+         ================================================================== -->
+    <section id="bracketScreen" class="screen has-topbar" aria-label="Knockout bracket">
+      <div class="br-inner">
+        <div class="br-kicker" id="brKicker">Knockout Stage</div>
+        <h2 class="br-title" id="brTitle">The Bracket</h2>
+        <div class="br-wrap"><div class="bracket" id="bracket"></div></div>
+        <button class="btn btn-gold" id="brContinueBtn" type="button">Continue <span class="kbd-hint">Enter</span></button>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - THE FINAL
+         ================================================================== -->
+    <section id="finalScreen" class="screen has-topbar final-screen" aria-label="The final">
+      <div class="fn-rays"></div>
+      <div class="fn-side a" id="fnA"></div>
+      <div class="fn-side b" id="fnB"></div>
+      <div class="fn-center">
+        <div class="fn-kicker">ESA Arcade Championship</div>
+        <h2 class="fn-title">The Final</h2>
+        <div class="fn-vs">VS</div>
+        <button class="btn btn-gold btn-big" id="fnDrawBtn" type="button">Draw the Final Game <span class="kbd-hint">Enter</span></button>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         TOURNAMENT - CHAMPION
+         ================================================================== -->
+    <section id="championScreen" class="screen has-topbar champion-screen" aria-label="Champion">
+      <div class="ch-rays"></div>
+      <div class="ch-confetti" id="chConfetti"></div>
+      <div class="ch-inner">
+        <div class="ch-kicker">ESA Arcade</div>
+        <h2 class="ch-title">Champion</h2>
+        <div class="ch-stage">
+          <img class="ch-emblem" src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" />
+          <img class="ch-art" id="chArt" src="assets/zima_normal.png" alt="" />
+          <svg class="ch-trophy" viewBox="0 0 100 100" aria-hidden="true"><use href="#icoTrophy" /></svg>
+        </div>
+        <div class="ch-name" id="chName">Zima</div>
+        <div class="ch-record" id="chRecord"></div>
+        <div class="ch-actions">
+          <button class="btn btn-ghost" id="chHomeBtn" type="button">Arcade Home</button>
+          <button class="btn btn-gold" id="chAgainBtn" type="button">New Tournament <span class="kbd-hint">Enter</span></button>
+        </div>
+      </div>
+    </section>
+
   </div>
 
-  <div id="veil" aria-hidden="true"></div>
+  <!-- Global top bar: one consistent BACK control + sound toggle. -->
+  <div id="topbar">
+    <button class="back-btn" id="backBtn" type="button">
+      <span class="px-arrow left" aria-hidden="true"></span>
+      <span class="bb-label">Back</span>
+      <span class="keycap">Esc</span>
+    </button>
+    <span class="topbar-crumb" id="topbarCrumb"></span>
+    <button class="sound-btn" id="soundBtn" type="button" aria-label="Toggle sound">
+      <svg class="icon-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 2.2v2.1a7.8 7.8 0 0 1 0 15.4v2.1a9.9 9.9 0 0 0 0-19.6z"/></svg>
+      <svg class="icon-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4zm15.6 3l2.4-2.4-1.4-1.4L18.2 10.6 15.8 8.2l-1.4 1.4 2.4 2.4-2.4 2.4 1.4 1.4 2.4-2.4 2.4 2.4 1.4-1.4z"/></svg>
+    </button>
+  </div>
+
+  <!-- Modal layer: pause menu, confirmations, standings peek. -->
+  <div id="modalLayer" class="hidden"></div>
+
+  <!-- The ESA mascot (attract mode only). The emblem PNG is never altered:
+       legs and arms are separate elements drawn around it. -->
+  <div id="mascot" aria-hidden="true">
+    <div class="m-body">
+      <span class="m-arm l"></span><span class="m-arm r"></span>
+      <img src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" />
+      <span class="m-leg l"></span><span class="m-leg r"></span>
+    </div>
+    <span class="m-shadow"></span>
+  </div>
+
+  <div id="crt" aria-hidden="true"></div>
+  <div id="veil" aria-hidden="true">
+    <div class="shutter top"></div>
+    <div class="shutter bot"></div>
+    <div class="veil-seal"><img src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" /></div>
+    <div class="veil-line"></div>
+  </div>
 
   <!-- Plain scripts, not modules: this must keep working from file:// -->
   <script src="js/core.js"></script>
   <script src="js/characters.js"></script>
+  <script src="js/registry.js"></script>
   <script src="js/arena.js"></script>
   <script src="js/bombpass.js"></script>
   <script src="js/coinrush.js"></script>
   <script src="js/bonkbooth.js"></script>
+  <script src="js/tournament.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/menus.js"></script>
+  <script src="js/tournament-ui.js"></script>
+  <script src="js/attract.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

@@ -16,7 +16,7 @@
   var MATCH_SECONDS = 60;
   var PLAYER_SPEED = 185;        // was 240 in V1
   var TOKEN_COUNT = 7;
-  var PICKUP_RADIUS = 44;
+  var PICKUP_FRACTION = 0.4;     // token pickup radius as a fraction of its drawn size
   var TOKEN_SIZE = 46;
   var BONUS_SIZE = 62;
   var MIN_FROM_PLAYER = 155;     // never drop a token in someone's lap
@@ -30,32 +30,27 @@
     return { left: b.left + 16, right: b.right - 16, top: b.top + 8, bottom: b.bottom - 14 };
   }
 
-  function CoinRush(api) {
+  /** Pickup radius of a token, proportional to how big it is drawn. */
+  function tokenRadius(t) {
+    return (t.bonus ? BONUS_SIZE : TOKEN_SIZE) * PICKUP_FRACTION;
+  }
+
+  function CoinRush(api, setup) {
     this.api = api;
+    var who = ESA.describeMatchup(setup);
     this.timers = new ESA.TimerGroup();
     this.fx = new ESA.ParticleField(220);
 
-    this.p1 = ESA.makePlayer("zima", 230, 370, { speed: PLAYER_SPEED, facing: "right" });
-    this.p2 = ESA.makePlayer("shaza", W - 230, 370, { speed: PLAYER_SPEED, facing: "left" });
+    this.p1 = ESA.makePlayer(who.p1, 230, 370, { speed: PLAYER_SPEED, facing: "right" });
+    this.p2 = ESA.makePlayer(who.p2, W - 230, 370, { speed: PLAYER_SPEED, facing: "left" });
 
-    this.score = { zima: 0, shaza: 0 };
+    this.score = { p1: 0, p2: 0 };
     this.timeLeft = MATCH_SECONDS;
     this.state = "idle";
     this.tokens = [];
     this.bonusActive = false;
     this.lastShownSecond = -1;
   }
-
-  CoinRush.meta = {
-    id: "coin",
-    title: "Coin Rush",
-    mode: "60 seconds",
-    rules: "ESA tokens drop across the arena. <b>Run over them to collect.</b> " +
-           "A normal token is worth 1. The rare glowing token is worth 3. " +
-           "Most points when the clock hits zero wins.",
-    hud: { centerLabel: "Time", centerValue: "60", pips: 0 },
-    controls: "arena"
-  };
 
   /* ------------------------------------------------------------------ *
    * Lifecycle
@@ -68,8 +63,8 @@
     ESA.Assets.prerender("token", "emblem", Math.round(TOKEN_SIZE * q));
     ESA.Assets.prerender("tokenBonus", "emblem", Math.round(BONUS_SIZE * q));
 
-    this.score.zima = 0;
-    this.score.shaza = 0;
+    this.score.p1 = 0;
+    this.score.p2 = 0;
     this.timeLeft = MATCH_SECONDS;
     this.lastShownSecond = -1;
     this.bonusActive = false;
@@ -84,8 +79,8 @@
       this.tokens.push(this.makeToken(false));
     }
 
-    ESA.UI.setScore("zima", 0);
-    ESA.UI.setScore("shaza", 0);
+    ESA.UI.setScore("p1", 0);
+    ESA.UI.setScore("p2", 0);
     ESA.UI.setCenter("Time", MATCH_SECONDS, false);
 
     this.state = "countdown";
@@ -118,9 +113,12 @@
       var x = ESA.rand(area.left, area.right);
       var y = ESA.rand(area.top, area.bottom);
 
+      // Distance to each player's body centre, so a token never spawns
+      // inside someone's torso even though their feet are further away.
+      var c1 = ESA.bodyBounds(this.p1), c2 = ESA.bodyBounds(this.p2);
       var dp = Math.min(
-        ESA.dist(x, y, this.p1.x, this.p1.y),
-        ESA.dist(x, y, this.p2.x, this.p2.y)
+        ESA.dist(x, y, c1.cx, c1.cy),
+        ESA.dist(x, y, c2.cx, c2.cy)
       );
       var dt = Infinity;
       for (var i = 0; i < this.tokens.length; i++) {
@@ -168,9 +166,9 @@
     if (token.bonus) this.bonusActive = false;
 
     var value = token.bonus ? 3 : 1;
-    var id = player.character.id;
-    this.score[id] += value;
-    ESA.UI.setScore(id, this.score[id]);
+    var slot = player.slot;
+    this.score[slot] += value;
+    ESA.UI.setScore(slot, this.score[slot]);
 
     ESA.Audio.play(token.bonus ? "tokenBonus" : "tokenPickup");
 
@@ -214,6 +212,10 @@
     ESA.movePlayer(this.p1, dt, ESA.BOUNDS, canMove);
     ESA.movePlayer(this.p2, dt, ESA.BOUNDS, canMove);
 
+    // Body boxes once per frame, after movement.
+    var b1 = ESA.bodyBounds(this.p1);
+    var b2 = ESA.bodyBounds(this.p2);
+
     // Tokens keep breathing during the countdown so the arena feels alive.
     for (var i = 0; i < this.tokens.length; i++) {
       var t = this.tokens[i];
@@ -231,11 +233,21 @@
 
       if (this.state !== "playing") continue;
 
-      // Closest player wins a contested token; collect() is idempotent.
-      var d1 = ESA.dist(this.p1.x, this.p1.y, t.x, t.y);
-      var d2 = ESA.dist(this.p2.x, this.p2.y, t.x, t.y);
-      if (d1 < PICKUP_RADIUS || d2 < PICKUP_RADIUS) {
-        this.collect(d1 <= d2 ? this.p1 : this.p2, t);
+      // Pickup = the token's circle touching the player's BODY box (the
+      // rendered sprite, centred on the character), not the feet point.
+      // Contested tokens go to the player whose body centre is closer;
+      // collect() is idempotent.
+      var r = tokenRadius(t);
+      var hit1 = ESA.circleHitsRect(t.x, t.y, r, b1);
+      var hit2 = ESA.circleHitsRect(t.x, t.y, r, b2);
+      if (hit1 || hit2) {
+        var winner;
+        if (hit1 && hit2) {
+          winner = ESA.dist(b1.cx, b1.cy, t.x, t.y) <= ESA.dist(b2.cx, b2.cy, t.x, t.y) ? this.p1 : this.p2;
+        } else {
+          winner = hit1 ? this.p1 : this.p2;
+        }
+        this.collect(winner, t);
       }
     }
 
@@ -261,31 +273,31 @@
     this.state = "matchEnd";              // freezes gameplay immediately
     ESA.UI.setCenter("Time", 0, false);
 
-    var z = this.score.zima, s = this.score.shaza;
-    var winnerId = z === s ? null : (z > s ? "zima" : "shaza");
+    var z = this.score.p1, s = this.score.p2;
+    var winner = z === s ? null : (z > s ? this.p1 : this.p2);
 
-    if (winnerId) {
-      var name = ESA.characters[winnerId].name;
+    if (winner) {
+      var name = winner.name;
       var margin = Math.abs(z - s);
       ESA.Audio.play("matchWin");
       this.celebrate();
       this.api.endMatch({
-        winnerId: winnerId,
+        winner: winner.slot,
         kicker: "Time",
         title: name + " Wins",
         text: margin === 1
           ? "Won it by a single token. Brutal."
           : "Collected " + margin + " more tokens over sixty seconds.",
-        zima: z, shaza: s
+        scores: { p1: z, p2: s }
       });
     } else {
       ESA.Audio.play("draw");
       this.api.endMatch({
-        winnerId: null,
+        winner: null,
         kicker: "Time",
         title: "Dead Heat",
         text: "Identical scores. Nobody gets bragging rights.",
-        zima: z, shaza: s
+        scores: { p1: z, p2: s }
       });
     }
   };
@@ -450,5 +462,23 @@
   };
 
   ESA.CoinRush = CoinRush;
+
+  ESA.Games.register({
+    id: "coin",
+    title: "Coin Rush",
+    tagline: "Sixty seconds. Collect ESA tokens. Golden ones are worth three.",
+    description: "ESA tokens drop across the arena. <b>Run over them to collect.</b> " +
+                 "A normal token is worth 1. The rare glowing token is worth 3. " +
+                 "Most points when the clock hits zero wins.",
+    mode: MATCH_SECONDS + " seconds",
+    icon: { img: "assets/Branding/Golden Canadian Pharaoh Emblem.png" },
+    controls: "arena",
+    hud: { centerLabel: "Time", centerValue: String(MATCH_SECONDS), pips: 0 },
+    accent: "#f3c35a",
+    canTie: true,
+    tournamentEligible: true,
+    enabled: true,
+    create: function (api, setup) { return new CoinRush(api, setup); }
+  });
 
 })(window.ESA);

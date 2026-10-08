@@ -19,15 +19,16 @@
   var ROUND_START_COOLDOWN = 1.1;
   var FUSE_MIN = 10, FUSE_MAX = 18;
 
-  function BombPass(api) {
+  function BombPass(api, setup) {
     this.api = api;
+    var who = ESA.describeMatchup(setup);
     this.timers = new ESA.TimerGroup();
     this.fx = new ESA.ParticleField(200);
 
-    this.p1 = ESA.makePlayer("zima", 250, 370, { speed: PLAYER_SPEED, facing: "right" });
-    this.p2 = ESA.makePlayer("shaza", W - 250, 370, { speed: PLAYER_SPEED, facing: "left" });
+    this.p1 = ESA.makePlayer(who.p1, 250, 370, { speed: PLAYER_SPEED, facing: "right" });
+    this.p2 = ESA.makePlayer(who.p2, W - 250, 370, { speed: PLAYER_SPEED, facing: "left" });
 
-    this.wins = { zima: 0, shaza: 0 };
+    this.wins = { p1: 0, p2: 0 };
     this.round = 1;
     this.state = "idle";
 
@@ -43,25 +44,15 @@
     this.blastY = 0;
   }
 
-  BombPass.meta = {
-    id: "bomb",
-    title: "Bomb Pass",
-    mode: "First to 3 rounds",
-    rules: "One of you is holding a live bomb. <b>Touch your opponent to pass it.</b> " +
-           "The fuse is hidden, so nobody knows when it blows. Don't be the one holding it.",
-    hud: { centerLabel: "Round", centerValue: "1", pips: WINS_NEEDED },
-    controls: "arena"
-  };
-
   /* ------------------------------------------------------------------ *
    * Lifecycle
    * ------------------------------------------------------------------ */
   BombPass.prototype.start = function () {
-    this.wins.zima = 0;
-    this.wins.shaza = 0;
+    this.wins.p1 = 0;
+    this.wins.p2 = 0;
     this.round = 1;
-    ESA.UI.setWins("zima", 0);
-    ESA.UI.setWins("shaza", 0);
+    ESA.UI.setWins("p1", 0);
+    ESA.UI.setWins("p2", 0);
     ESA.UI.setCenter("Round", "1", false);
     this.beginRound();
   };
@@ -221,9 +212,9 @@
       });
     }
 
-    this.wins[winner.character.id] += 1;
-    var w = this.wins[winner.character.id];
-    ESA.UI.setWins(winner.character.id, w);
+    this.wins[winner.slot] += 1;
+    var w = this.wins[winner.slot];
+    ESA.UI.setWins(winner.slot, w);
 
     var matchOver = (w >= WINS_NEEDED);
 
@@ -233,7 +224,7 @@
       ESA.UI.banner(
         self.timers,
         matchOver ? "Match Point" : "Round " + self.round,
-        winner.character.name.toUpperCase() + " WINS",
+        winner.name.toUpperCase() + " WINS",
         matchOver ? 900 : 1250,
         function () {
           if (self.state !== "roundEnd") return;
@@ -255,13 +246,12 @@
     this.celebrate(winner.x, 150);
 
     this.api.endMatch({
-      winnerId: winner.character.id,
+      winner: winner.slot,
       kicker: "Match Over",
-      title: winner.character.name + " Wins",
-      text: "Took the match " + this.wins[winner.character.id] + "–" +
-            this.wins[loser.character.id] + " with a hidden fuse every round.",
-      zima: this.wins.zima,
-      shaza: this.wins.shaza
+      title: winner.name + " Wins",
+      text: "Took the match " + this.wins[winner.slot] + "–" +
+            this.wins[loser.slot] + " with a hidden fuse every round.",
+      scores: { p1: this.wins.p1, p2: this.wins.p2 }
     });
   };
 
@@ -445,5 +435,22 @@
   };
 
   ESA.BombPass = BombPass;
+
+  ESA.Games.register({
+    id: "bomb",
+    title: "Bomb Pass",
+    tagline: "Holding it? Chase. Not holding it? Run. The fuse is hidden.",
+    description: "One of you is holding a live bomb. <b>Touch your opponent to pass it.</b> " +
+                 "The fuse is hidden, so nobody knows when it blows. Don't be the one holding it.",
+    mode: "First to " + WINS_NEEDED + " rounds",
+    icon: { symbol: "#icoBomb" },
+    controls: "arena",
+    hud: { centerLabel: "Round", centerValue: "1", pips: WINS_NEEDED },
+    accent: "#e8584f",
+    canTie: false,
+    tournamentEligible: true,
+    enabled: true,
+    create: function (api, setup) { return new BombPass(api, setup); }
+  });
 
 })(window.ESA);

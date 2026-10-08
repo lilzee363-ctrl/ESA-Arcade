@@ -36,6 +36,10 @@
   --danger: #e8584f;
   --success: #3fbb7d;
 
+  /* --- Player slots (controls belong to the slot, not the character) --- */
+  --p1: #4aa3ff;
+  --p2: #ff6a5c;
+
   /* --- Per-game accents ------------------------------------------------ */
   --accent-bomb: #e8584f;
   --accent-coin: #f3c35a;
@@ -47,6 +51,8 @@
                   system-ui, sans-serif;
   --font-ui: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
              "Helvetica Neue", Arial, sans-serif;
+  /* Score / counter readouts: a tabular, slightly mechanical face. */
+  --font-digits: "Bahnschrift", "DIN Alternate", "Consolas", "Menlo", monospace;
 
   /* --- Motion ---------------------------------------------------------- */
   --ease-out: cubic-bezier(.22, 1, .36, 1);
@@ -243,6 +249,27 @@ h1, h2, h3, p { margin: 0; }
 .btn-ghost:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(3, 11, 22, .8); }
 
 .btn-small { min-height: 38px; padding: 0 16px; font-size: 13px; letter-spacing: .12em; }
+.btn-big { min-height: 56px; padding: 0 34px; font-size: 18px; }
+.btn:disabled { opacity: .42; cursor: not-allowed; transform: none !important; filter: grayscale(.5); }
+
+/* Small key hint inside a button: [Enter] */
+.kbd-hint {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 2px;
+  border-radius: 5px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: .1em;
+  line-height: 1;
+  background: rgba(3, 11, 22, .22);
+  border: 1px solid currentColor;
+  opacity: .72;
+}
+.btn-ghost .kbd-hint { background: rgba(3, 11, 22, .45); }
 
 /* --------------------------------------------------------------------------
    Key caps - used in intro screens and the HUD.

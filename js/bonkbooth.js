@@ -20,9 +20,10 @@
   var HOLE_RX = 62;
   var HOLE_RY = 19;
   var HOLE_X = {
-    zima:  [104, 250, 396],
-    shaza: [W - 396, W - 250, W - 104]
+    p1: [104, 250, 396],
+    p2: [W - 396, W - 250, W - 104]
   };
+  var SLOTS = ["p1", "p2"];
   var SPRITE_H = 152;
   var CLIP_TOP = HOLE_Y - 168;
 
@@ -35,34 +36,39 @@
      hurt pose flashes by in a couple of frames and the payoff is invisible. */
   var STUN = 0.46;
 
-  function BonkBooth(api) {
+  function BonkBooth(api, setup) {
     this.api = api;
     this.timers = new ESA.TimerGroup();
     this.fx = new ESA.ParticleField(200);
 
-    this.score = { zima: 0, shaza: 0 };
+    var who = ESA.describeMatchup(setup);
+    this.players = { p1: who.p1, p2: who.p2 };
+    // The booth backdrop bakes in names and colours, so cache it per matchup.
+    this.layerKey = "arena-bonk:" + who.p1.name + "|" + who.p1.color + "|" +
+                    who.p2.name + "|" + who.p2.color;
+
+    this.score = { p1: 0, p2: 0 };
     this.timeLeft = MATCH_SECONDS;
     this.state = "idle";
     this.lastShownSecond = -1;
 
-    this.targets = { zima: null, shaza: null };
-    this.swing = { zima: null, shaza: null };   // mallet feedback
-    this.holeGlow = { zima: [0, 0, 0], shaza: [0, 0, 0] };
+    this.targets = { p1: null, p2: null };
+    this.swing = { p1: null, p2: null };   // mallet feedback
+    this.holeGlow = { p1: [0, 0, 0], p2: [0, 0, 0] };
   }
 
-  BonkBooth.meta = {
-    id: "bonk",
-    title: "Bonk Booth",
-    mode: "42 seconds",
-    rules: "Your rival pops out of your three holes. <b>Hit the key under the hole</b> " +
-           "before they drop back down. If a bomb appears, leave it alone — bonking it costs you a point.",
-    hud: { centerLabel: "Time", centerValue: "42", pips: 0 },
-    controls: "booth"
-  };
-
-  /** Who appears in a given player's holes: their opponent. */
+  /** Whose face appears in a given player's holes: their opponent's slot. */
   function victimOf(side) {
-    return side === "zima" ? "shaza" : "zima";
+    return side === "p1" ? "p2" : "p1";
+  }
+
+  /** "#2f7fd8" -> "47,127,216" for rgba() strings. */
+  function rgbOf(hex) {
+    var h = String(hex || "#c0871f").replace("#", "");
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    var n = parseInt(h, 16);
+    if (!isFinite(n)) n = 0xc0871f;
+    return ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255);
   }
 
   /* ------------------------------------------------------------------ *
@@ -71,21 +77,24 @@
   BonkBooth.prototype.start = function () {
     var self = this;
 
-    this.score.zima = 0;
-    this.score.shaza = 0;
+    this.score.p1 = 0;
+    this.score.p2 = 0;
     this.timeLeft = MATCH_SECONDS;
     this.lastShownSecond = -1;
     this.fx.clear();
-    this.swing.zima = null;
-    this.swing.shaza = null;
-    this.holeGlow.zima = [0, 0, 0];
-    this.holeGlow.shaza = [0, 0, 0];
+    this.swing.p1 = null;
+    this.swing.p2 = null;
+    this.holeGlow.p1 = [0, 0, 0];
+    this.holeGlow.p2 = [0, 0, 0];
 
-    this.targets.zima = this.makeTarget("zima", 0.5);
-    this.targets.shaza = this.makeTarget("shaza", 0.8);
+    this.targets.p1 = this.makeTarget("p1", 0.5);
+    this.targets.p2 = this.makeTarget("p2", 0.8);
 
-    ESA.UI.setScore("zima", 0);
-    ESA.UI.setScore("shaza", 0);
+    // Only the current matchup's backdrop stays cached.
+    ESA.Stage.evictLayers("arena-bonk:", this.layerKey);
+
+    ESA.UI.setScore("p1", 0);
+    ESA.UI.setScore("p2", 0);
     ESA.UI.setCenter("Time", MATCH_SECONDS, false);
 
     this.state = "countdown";
@@ -185,9 +194,9 @@
   BonkBooth.prototype.onKeyDown = function (code) {
     if (this.state !== "playing") return;
 
-    for (var i = 0; i < ESA.roster.length; i++) {
-      var side = ESA.roster[i];
-      var idx = ESA.characters[side].bonkKeys.indexOf(code);
+    for (var i = 0; i < SLOTS.length; i++) {
+      var side = SLOTS[i];
+      var idx = ESA.CONTROLS[side].booth.indexOf(code);
       if (idx >= 0) this.attempt(side, idx);
     }
   };
@@ -271,8 +280,8 @@
   BonkBooth.prototype.update = function (dt, now) {
     this.fx.update(dt);
 
-    for (var i = 0; i < ESA.roster.length; i++) {
-      var side = ESA.roster[i];
+    for (var i = 0; i < SLOTS.length; i++) {
+      var side = SLOTS[i];
       if (this.swing[side]) {
         this.swing[side].t -= dt;
         if (this.swing[side].t <= 0) this.swing[side] = null;
@@ -284,8 +293,8 @@
 
     if (this.state !== "playing") return;
 
-    this.advance("zima", dt);
-    this.advance("shaza", dt);
+    this.advance("p1", dt);
+    this.advance("p2", dt);
 
     this.timeLeft -= dt;
     if (this.timeLeft < 0) this.timeLeft = 0;
@@ -304,28 +313,28 @@
     this.state = "matchEnd";
     ESA.UI.setCenter("Time", 0, false);
 
-    var z = this.score.zima, s = this.score.shaza;
-    var winnerId = z === s ? null : (z > s ? "zima" : "shaza");
+    var z = this.score.p1, s = this.score.p2;
+    var winner = z === s ? null : (z > s ? "p1" : "p2");
 
-    if (winnerId) {
+    if (winner) {
       ESA.Audio.play("matchWin");
       this.celebrate();
       this.api.endMatch({
-        winnerId: winnerId,
+        winner: winner,
         kicker: "Booth Closed",
-        title: ESA.characters[winnerId].name + " Wins",
+        title: this.players[winner].name + " Wins",
         text: "Landed " + Math.max(z, s) + " clean bonks on " +
-              ESA.characters[victimOf(winnerId)].name + ".",
-        zima: z, shaza: s
+              this.players[victimOf(winner)].name + ".",
+        scores: { p1: z, p2: s }
       });
     } else {
       ESA.Audio.play("draw");
       this.api.endMatch({
-        winnerId: null,
+        winner: null,
         kicker: "Booth Closed",
         title: "Dead Heat",
         text: "Perfectly balanced bonking. Somehow.",
-        zima: z, shaza: s
+        scores: { p1: z, p2: s }
       });
     }
   };
@@ -348,7 +357,7 @@
    * ================================================================== */
 
   /** Everything that never moves, rendered once. */
-  function drawBoothLayer(g) {
+  function drawBoothLayer(g, players) {
     /* --- Back wall --------------------------------------------------- */
     var wall = g.createLinearGradient(0, 0, 0, H);
     wall.addColorStop(0, "#0d2a49");
@@ -375,7 +384,7 @@
 
     // Booth spotlights: a soft pool of light above each hole, so the back
     // wall reads as a lit attraction rather than an empty panel.
-    ESA.roster.forEach(function (side) {
+    SLOTS.forEach(function (side) {
       HOLE_X[side].forEach(function (hx) {
         var cone = g.createLinearGradient(0, 132, 0, HOLE_Y - 6);
         cone.addColorStop(0, "rgba(243,195,90,.13)");
@@ -394,9 +403,9 @@
     });
 
     /* --- Side colour columns ---------------------------------------- */
-    [["#2f7fd8", 0, 1], ["#9560ac", W, -1]].forEach(function (c) {
+    [[players.p1.color, 0, 1], [players.p2.color, W, -1]].forEach(function (c) {
       var grad = g.createLinearGradient(c[1], 0, c[1] + 120 * c[2], 0);
-      grad.addColorStop(0, "rgba(" + (c[0] === "#2f7fd8" ? "47,127,216" : "149,96,172") + ",.22)");
+      grad.addColorStop(0, "rgba(" + rgbOf(c[0]) + ",.22)");
       grad.addColorStop(1, "rgba(0,0,0,0)");
       g.fillStyle = grad;
       g.fillRect(Math.min(c[1], c[1] + 120 * c[2]), 90, 120, H - 90);
@@ -459,9 +468,9 @@
     g.letterSpacing = "0px";
 
     /* --- Side name plates --------------------------------------------- */
-    ESA.roster.forEach(function (side) {
-      var c = ESA.characters[side];
-      var px = side === "zima" ? W * 0.25 : W * 0.75;
+    SLOTS.forEach(function (side) {
+      var c = players[side];
+      var px = side === "p1" ? W * 0.25 : W * 0.75;
       g.save();
       g.fillStyle = "rgba(4,14,26,.6)";
       ESA.roundRect(g, px - 96, 100, 192, 28, 14);
@@ -683,7 +692,8 @@
    * Draw
    * ------------------------------------------------------------------ */
   BonkBooth.prototype.draw = function (ctx, now) {
-    var layer = ESA.Stage.layer("arena-bonk", drawBoothLayer);
+    var players = this.players;
+    var layer = ESA.Stage.layer(this.layerKey, function (g) { drawBoothLayer(g, players); });
     ESA.Stage.blit(ctx, layer);
 
     // Marquee bulbs - the only animated part of the booth chrome.
@@ -701,11 +711,11 @@
     }
 
     // Holes, back to front: back rim, character, front lip, keycap.
-    for (var i = 0; i < ESA.roster.length; i++) {
-      var side = ESA.roster[i];
+    for (var i = 0; i < SLOTS.length; i++) {
+      var side = SLOTS[i];
       var t = this.targets[side];
-      var color = ESA.characters[side].color;
-      var labels = ESA.characters[side].bonkLabel.split(" ");
+      var color = this.players[side].color;
+      var labels = ESA.controlsFor(side, "booth").caps;
 
       for (var h = 0; h < 3; h++) {
         var cx = HOLE_X[side][h];
@@ -718,7 +728,7 @@
 
         drawHoleLip(ctx, cx);
 
-        var pressed = ESA.Input.isDown(ESA.characters[side].bonkKeys[h]);
+        var pressed = ESA.Input.isDown(ESA.CONTROLS[side].booth[h]);
         drawKeycap(ctx, cx, labels[h], color, pressed);
       }
 
@@ -743,7 +753,7 @@
     if (t.type === "bomb") {
       drawBoothBomb(ctx, cx, feetY - 46, now);
     } else {
-      var victim = victimOf(side);
+      var victim = this.players[victimOf(side)].character.id;
       var wasHit = (t.hitType === "bonk");
 
       // Squash on impact, settling over reactT.
@@ -763,9 +773,11 @@
       ctx.shadowColor = "rgba(0,0,0,.4)";
       ctx.shadowBlur = 16;
       ctx.shadowOffsetY = 4;
-      ESA.drawSprite(ctx, victim, wasHit, cx, feetY, {
+      // Quick crossfade into the hurt art right after the bonk lands.
+      var blend = wasHit ? ESA.clamp((0.34 - t.reactT) / 0.09, 0, 1) : 0;
+      ESA.drawSpriteBlend(ctx, victim, blend, cx, feetY, {
         height: SPRITE_H,
-        flip: side === "shaza",
+        flip: side === "p2",
         scaleX: sx,
         scaleY: sy,
         rotate: rot
@@ -777,5 +789,22 @@
   };
 
   ESA.BonkBooth = BonkBooth;
+
+  ESA.Games.register({
+    id: "bonk",
+    title: "Bonk Booth",
+    tagline: "Your rival pops out of three holes. Hit the matching key. Skip the bombs.",
+    description: "Your rival pops out of your three holes. <b>Hit the key under the hole</b> " +
+                 "before they drop back down. If a bomb appears, leave it alone — bonking it costs you a point.",
+    mode: MATCH_SECONDS + " seconds",
+    icon: { symbol: "#icoMallet" },
+    controls: "booth",
+    hud: { centerLabel: "Time", centerValue: String(MATCH_SECONDS), pips: 0 },
+    accent: "#4fb7c9",
+    canTie: true,
+    tournamentEligible: true,
+    enabled: true,
+    create: function (api, setup) { return new BonkBooth(api, setup); }
+  });
 
 })(window.ESA);

@@ -1,6 +1,10 @@
 /* ==========================================================================
-   ESA ARCADE - Screens, HUD, transitions and motion.
-   Depends on css/tokens.css.
+   ESA ARCADE - Shell, ambient, transitions, welcome, intro, play + HUD.
+   Depends on css/tokens.css. Menu screens live in css/menus.css and the
+   tournament screens in css/tournament.css.
+
+   GAMEPLAY RULE: body.is-gameplay freezes every decorative animation
+   (ambient, dust, bezel bulbs, CRT, mascot). Only the game and its HUD move.
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -18,12 +22,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 20px clamp(16px, 3vw, 40px);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
   transition: opacity .28s var(--ease-out), visibility .28s;
 }
+.screen.has-topbar { padding-top: clamp(64px, 9vh, 78px); padding-bottom: clamp(18px, 3vh, 30px); }
 .screen.is-active {
   opacity: 1;
   visibility: visible;
@@ -44,10 +49,11 @@
   from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: none; }
 }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 /* --------------------------------------------------------------------------
-   Ambient background - navy field, Egyptian chevrons, light sweep, dust.
-   Parallax offsets come from --px / --py, set in main.js.
+   Ambient background - navy field, Egyptian chevrons, a retro horizon
+   grid, light sweep and dust. Parallax offsets come from --px / --py.
    -------------------------------------------------------------------------- */
 #ambient {
   position: fixed;
@@ -61,7 +67,7 @@
 .amb-pattern {
   position: absolute;
   inset: 0;
-  opacity: .055;
+  opacity: .05;
   transform: translate3d(calc(var(--px, 0) * 10px), calc(var(--py, 0) * 10px), 0);
   transition: transform .5s var(--ease-out);
   background-image:
@@ -73,6 +79,39 @@
   -webkit-mask-image: radial-gradient(120% 80% at 50% 0%, #000 10%, transparent 72%);
           mask-image: radial-gradient(120% 80% at 50% 0%, #000 10%, transparent 72%);
 }
+
+/* Retro horizon floor: a gold perspective grid fading into the distance. */
+.amb-floor {
+  position: absolute;
+  left: -20%;
+  right: -20%;
+  bottom: 0;
+  height: 46%;
+  perspective: 420px;
+  perspective-origin: 50% 0%;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 55%);
+          mask-image: linear-gradient(180deg, transparent 0%, #000 55%);
+}
+.amb-grid {
+  position: absolute;
+  inset: 0 0 -60% 0;
+  transform-origin: 50% 0%;
+  transform: rotateX(62deg);
+  opacity: .16;
+  background-image:
+    linear-gradient(90deg, rgba(243, 195, 90, .9) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(243, 195, 90, .9) 1px, transparent 1px);
+  background-size: 64px 64px;
+  animation: gridRoll 6s linear infinite;
+  animation-play-state: paused;
+}
+@keyframes gridRoll {
+  from { background-position: 0 0; }
+  to   { background-position: 0 64px; }
+}
+/* The floor only rolls in attract mode. */
+body.is-attract .amb-grid { animation-play-state: running; opacity: .22; }
 
 /* A slow band of warm light drifting across the field. */
 .amb-sweep {
@@ -91,6 +130,7 @@
   from { transform: translateX(0) rotate(8deg); }
   to   { transform: translateX(300%) rotate(8deg); }
 }
+body.is-attract .amb-sweep { animation-duration: 9s; }
 
 /* Soft gold pool behind the centre of the composition. */
 .amb-glow {
@@ -133,77 +173,125 @@
   100% { opacity: 0; transform: translate3d(var(--drift, 30px), -104vh, 0) scale(1.1); }
 }
 
-/* Ambient dims while a match is on so gameplay owns the attention. */
-#ambient.is-dim .amb-sweep,
-#ambient.is-dim .amb-glow { opacity: .35; }
-#ambient.is-dim .amb-dust { opacity: .3; }
-#ambient .amb-sweep,
-#ambient .amb-glow,
-#ambient .amb-dust { transition: opacity .5s var(--ease-out); }
+/* GAMEPLAY: the background goes still and dim so the arena owns attention. */
+body.is-gameplay .amb-sweep,
+body.is-gameplay .amb-dust,
+body.is-gameplay .amb-floor { display: none; }
+body.is-gameplay .amb-glow { opacity: .35; transform: none; transition: none; }
+body.is-gameplay .amb-pattern { transform: none; transition: none; }
 
 /* --------------------------------------------------------------------------
-   Transition veil - the wipe used between every screen change.
+   Transition: an arcade shutter. Two gold-edged panels slam shut, the
+   screen swaps behind them, then they open with a CRT line flick.
+   Timings match ESA.Screens.go (310ms close, 380ms open).
    -------------------------------------------------------------------------- */
 #veil {
   position: fixed;
   inset: 0;
   z-index: 90;
   pointer-events: none;
-  opacity: 0;
-  background: linear-gradient(105deg, var(--navy-900) 0%, var(--navy-700) 48%, var(--navy-900) 100%);
-  clip-path: inset(0 100% 0 0);
+  overflow: hidden;
 }
-#veil.is-in {
-  opacity: 1;
-  clip-path: inset(0 0 0 0);
-  transition: clip-path .3s var(--ease-in-out), opacity .05s linear;
-}
-#veil.is-out {
-  opacity: 1;
-  clip-path: inset(0 0 0 100%);
-  transition: clip-path .36s var(--ease-in-out);
-}
-/* Gold leading edge on the wipe. */
-#veil::after {
-  content: "";
+#veil .shutter {
   position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 0 94%, var(--gold-400) 97%, transparent 100%);
-  opacity: .9;
+  left: 0;
+  right: 0;
+  height: 50.5%;
+  background:
+    repeating-linear-gradient(180deg, rgba(243, 195, 90, .05) 0 2px, transparent 2px 6px),
+    linear-gradient(180deg, var(--navy-800), var(--navy-900));
+  will-change: transform;
+}
+#veil .shutter.top {
+  top: 0;
+  transform: translate3d(0, -101%, 0);
+  border-bottom: 3px solid var(--gold-400);
+  box-shadow: 0 6px 24px rgba(243, 195, 90, .25);
+}
+#veil .shutter.bot {
+  bottom: 0;
+  transform: translate3d(0, 101%, 0);
+  border-top: 3px solid var(--gold-400);
+  box-shadow: 0 -6px 24px rgba(243, 195, 90, .25);
+}
+#veil.is-in .shutter { transform: none; transition: transform .29s cubic-bezier(.7, 0, .84, 0); }
+#veil.is-out .shutter.top { transform: translate3d(0, -101%, 0); transition: transform .36s var(--ease-out) .04s; }
+#veil.is-out .shutter.bot { transform: translate3d(0, 101%, 0); transition: transform .36s var(--ease-out) .04s; }
+
+/* Emblem seal on the seam while closed. */
+#veil .veil-seal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 66px;
+  height: 66px;
+  margin: -33px 0 0 -33px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--navy-600), var(--navy-900));
+  border: 2px solid var(--gold-400);
+  box-shadow: 0 0 26px rgba(243, 195, 90, .45);
+  opacity: 0;
+  transform: scale(.4);
+}
+#veil .veil-seal img { width: 72%; height: 72%; margin: 14%; object-fit: contain; }
+#veil.is-in .veil-seal { opacity: 1; transform: scale(1); transition: opacity .15s linear .16s, transform .2s var(--ease-back) .14s; }
+#veil.is-out .veil-seal { opacity: 0; transform: scale(1.3); transition: opacity .14s linear, transform .16s linear; }
+
+/* CRT line flick as the shutters part. */
+#veil .veil-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: #fff8e6;
+  box-shadow: 0 0 18px 4px rgba(255, 238, 190, .7);
+  opacity: 0;
+  transform: scaleX(0);
+}
+#veil.is-out .veil-line { animation: crtLine .34s ease-out; }
+@keyframes crtLine {
+  0%   { opacity: 1; transform: scaleX(1); }
+  60%  { opacity: .7; transform: scaleX(.6) scaleY(1.6); }
+  100% { opacity: 0; transform: scaleX(0); }
 }
 
 /* --------------------------------------------------------------------------
-   TITLE SCREEN
+   WELCOME / BOOT
    -------------------------------------------------------------------------- */
-#titleScreen .title-inner {
+#welcomeScreen { flex-direction: column; }
+.welcome-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: clamp(10px, 2.2vh, 22px);
+  gap: clamp(8px, 1.8vh, 18px);
   text-align: center;
 }
 
-.title-emblem {
+.welcome-emblem {
   position: relative;
-  width: clamp(130px, 19vh, 205px);
+  width: clamp(124px, 20vh, 210px);
   aspect-ratio: 1;
   flex: none;
+  margin-bottom: clamp(6px, 1.4vh, 14px);
   transform: translate3d(calc(var(--px, 0) * -16px), calc(var(--py, 0) * -12px), 0);
   transition: transform .5s var(--ease-out);
 }
-.title-emblem img {
+.welcome-emblem img {
+  position: relative;
+  z-index: 2;
   width: 100%;
   height: 100%;
   object-fit: contain;
   filter: drop-shadow(0 18px 26px rgba(0, 0, 0, .55));
   animation: emblemFloat 6.5s ease-in-out infinite;
 }
-.title-emblem::before {
-  content: "";
+.welcome-emblem .emblem-glow {
   position: absolute;
-  inset: -26%;
+  inset: -28%;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(243, 195, 90, .3), transparent 64%);
+  background: radial-gradient(circle, rgba(243, 195, 90, .32), transparent 64%);
   animation: emblemHalo 6.5s ease-in-out infinite;
   pointer-events: none;
 }
@@ -215,373 +303,223 @@
   0%, 100% { opacity: .62; transform: scale(1); }
   50%      { opacity: 1;   transform: scale(1.07); }
 }
+body.is-attract .welcome-emblem img { animation-duration: 3.6s; }
 
-.title-wordmark {
-  font-family: var(--font-display);
-  font-weight: 700;
-  text-transform: uppercase;
-  line-height: .88;
-  font-size: clamp(54px, 10.5vw, 136px);
-  letter-spacing: .1em;
-  margin-right: -.1em;                   /* compensate trailing letter-space */
-  background: linear-gradient(180deg, #fffaf0 6%, var(--gold-300) 46%, var(--gold-600) 99%);
-  -webkit-background-clip: text;
-          background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 6px 0 rgba(3, 11, 22, .55)) drop-shadow(0 16px 30px rgba(0, 0, 0, .5));
+/* --- The emblem's secret legs (attract mode skit). Separate elements:
+       the emblem artwork itself is never touched. ------------------------ */
+.emblem-legs {
+  position: absolute;
+  left: 50%;
+  bottom: 3%;
+  z-index: 1;
+  width: 40%;
+  height: 26%;
+  margin-left: -20%;
+  pointer-events: none;
+}
+.emblem-legs .leg {
+  position: absolute;
+  top: 0;
+  width: 15%;
+  height: 100%;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #c0871f, #e5a92f 50%, #a87518);
+  transform-origin: 50% 0;
+  transform: scaleY(0);
+  transition: transform .28s var(--ease-back);
+}
+.emblem-legs .leg::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  width: 260%;
+  height: 12px;
+  border-radius: 10px 12px 6px 6px;
+  background: #3a2a10;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, .18);
+}
+.emblem-legs .leg.l { left: 24%; }
+.emblem-legs .leg.l::after { right: -20%; }
+.emblem-legs .leg.r { right: 24%; }
+.emblem-legs .leg.r::after { left: -20%; }
+
+.welcome-emblem.is-walking { animation: emblemWaddle 4.6s var(--ease-in-out); }
+.welcome-emblem.is-walking .leg { transform: scaleY(1) translateY(70%); }
+.welcome-emblem.is-walking .leg.l { animation: stepL .3s ease-in-out .3s 11 alternate; }
+.welcome-emblem.is-walking .leg.r { animation: stepR .3s ease-in-out .3s 11 alternate; }
+.welcome-emblem.is-walking img { animation: emblemBob .3s ease-in-out .3s 12 alternate; }
+@keyframes stepL { from { transform: scaleY(1) translateY(70%) rotate(18deg); } to { transform: scaleY(1) translateY(70%) rotate(-14deg); } }
+@keyframes stepR { from { transform: scaleY(1) translateY(70%) rotate(-14deg); } to { transform: scaleY(1) translateY(70%) rotate(18deg); } }
+@keyframes emblemBob { from { transform: translateY(-14px) rotate(-3deg); } to { transform: translateY(-20px) rotate(3deg); } }
+@keyframes emblemWaddle {
+  0%   { translate: 0 0; }
+  22%  { translate: -70px 0; }
+  30%  { translate: -70px -8px; }
+  52%  { translate: 60px 0; }
+  60%  { translate: 60px -8px; }
+  82%  { translate: 0 0; }
+  100% { translate: 0 0; }
 }
 
-.title-sub {
+.welcome-kicker {
   font-family: var(--font-display);
-  font-size: clamp(11px, 1.5vw, 14px);
-  letter-spacing: .5em;
-  margin-right: -.5em;
+  font-size: clamp(10px, 1.3vw, 13px);
+  letter-spacing: .42em;
+  margin-right: -.42em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
-.title-rule { width: min(460px, 70vw); }
-
-.title-prompt {
-  margin-top: clamp(4px, 1.6vh, 16px);
-  padding: 14px 34px;
-  border-radius: 999px;
-  border: 1px solid rgba(243, 195, 90, .32);
-  background: rgba(7, 23, 40, .5);
+/* Chrome-gold wordmark with a stacked retro extrusion. */
+.welcome-wordmark {
+  position: relative;
   font-family: var(--font-display);
-  font-size: clamp(14px, 1.8vw, 19px);
+  font-weight: 700;
+  text-transform: uppercase;
+  line-height: .9;
+  font-size: clamp(54px, 10.5vw, 140px);
+  letter-spacing: .1em;
+  margin-right: -.1em;
+  background: linear-gradient(180deg, #fffaf0 4%, var(--gold-300) 40%, var(--gold-500) 62%, var(--gold-700) 100%);
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 0 #8e6314) drop-shadow(0 3px 0 #5c400c) drop-shadow(0 6px 0 #071728)
+          drop-shadow(0 18px 30px rgba(0, 0, 0, .55));
+}
+/* Scanline glint across the wordmark. */
+.welcome-wordmark::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 40%, rgba(255, 255, 255, .85) 50%, transparent 60%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: glint 6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes glint {
+  0%, 62%  { background-position: 120% 0; }
+  100%     { background-position: -40% 0; }
+}
+
+.welcome-rule { width: min(460px, 70vw); }
+
+.press-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: clamp(6px, 2vh, 22px);
+  padding: 14px 30px;
+  border-radius: 12px;
+  border: 2px solid rgba(243, 195, 90, .5);
+  background: rgba(7, 23, 40, .62);
+  box-shadow: 0 5px 0 rgba(3, 11, 22, .9), 0 0 0 4px rgba(243, 195, 90, .07);
+  font-family: var(--font-display);
+  font-size: clamp(16px, 2vw, 22px);
   letter-spacing: .3em;
-  margin-right: -.3em;
   text-transform: uppercase;
   color: var(--gold-100);
-  animation: breathe 2.8s var(--ease-in-out) infinite;
-  transition: background .18s var(--ease-out), border-color .18s var(--ease-out),
-              transform .18s var(--ease-out);
+  transition: transform .15s var(--ease-out), border-color .15s, background .15s;
 }
-.title-prompt:hover {
-  background: rgba(20, 58, 99, .72);
-  border-color: var(--gold-400);
-  transform: scale(1.03);
-}
-@keyframes breathe {
-  0%, 100% { opacity: .62; box-shadow: 0 0 0 rgba(243, 195, 90, 0); }
-  50%      { opacity: 1;   box-shadow: 0 0 30px rgba(243, 195, 90, .16); }
+.press-start:hover { transform: translateY(-2px); border-color: var(--gold-400); background: rgba(20, 58, 99, .78); }
+.press-start .ps-blink { animation: arcadeBlink 1.05s steps(1) infinite; }
+.press-start .keycap { font-size: 12px; letter-spacing: .12em; height: 30px; }
+@keyframes arcadeBlink {
+  0%, 62%  { opacity: 1; }
+  63%, 100% { opacity: .18; }
 }
 
-.title-foot {
+.welcome-foot {
   position: absolute;
-  bottom: 22px;
-  left: 0;
-  right: 0;
-  text-align: center;
+  left: 34px;
+  right: 34px;
+  bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-family: var(--font-display);
   font-size: 11px;
-  letter-spacing: .26em;
+  letter-spacing: .24em;
   text-transform: uppercase;
   color: var(--muted-dim);
 }
+.welcome-foot .wf-credit { color: var(--gold-500); flex: none; }
+.welcome-foot .wf-ticker { flex: 1; text-align: center; }
+.welcome-foot .wf-ticker.is-in { animation: tickerIn .5s var(--ease-out); }
+.welcome-foot .wf-ver {
+  flex: none;
+  padding: 3px 8px;
+  border: 1px solid rgba(243, 195, 90, .35);
+  border-radius: 5px;
+  color: var(--gold-400);
+}
+@keyframes tickerIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-/* The emblem flies toward the menu header as the title screen leaves. */
-#titleScreen.is-launching .title-emblem { animation: emblemLaunch .55s var(--ease-in-out) forwards; }
-#titleScreen.is-launching .title-wordmark,
-#titleScreen.is-launching .title-sub,
-#titleScreen.is-launching .title-rule,
-#titleScreen.is-launching .title-prompt { animation: dropAway .4s var(--ease-out) forwards; }
+/* Launch: the emblem leaps, everything else drops away. */
+#welcomeScreen.is-launching .welcome-emblem img { animation: emblemLaunch .5s var(--ease-in-out) forwards; }
+#welcomeScreen.is-launching .welcome-wordmark,
+#welcomeScreen.is-launching .welcome-kicker,
+#welcomeScreen.is-launching .welcome-rule,
+#welcomeScreen.is-launching .press-start { animation: dropAway .36s var(--ease-out) forwards; }
 @keyframes emblemLaunch {
-  to { transform: translateY(-16vh) scale(.42); opacity: 0; }
+  30%  { transform: translateY(8px) scale(1.06, .9); }
+  100% { transform: translateY(-18vh) scale(.5); opacity: 0; }
 }
 @keyframes dropAway {
   to { opacity: 0; transform: translateY(16px); }
 }
 
 /* --------------------------------------------------------------------------
-   Shared screen header (menu + intro + play)
-   -------------------------------------------------------------------------- */
-.arc-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-}
-.arc-mark {
-  width: 46px;
-  height: 46px;
-  flex: none;
-  object-fit: contain;
-  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, .5));
-}
-.arc-title {
-  font-family: var(--font-display);
-  font-size: 24px;
-  letter-spacing: .22em;
-  margin-right: -.22em;
-  text-transform: uppercase;
-  color: var(--cream);
-  line-height: 1;
-}
-.arc-tag {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .1em;
-  color: var(--muted-dim);
-  margin-top: 4px;
-}
-.arc-header .spacer { flex: 1; }
-
-/* Sound toggle */
-.sound-btn {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border-radius: 11px;
-  color: var(--gold-300);
-  background: rgba(10, 32, 57, .7);
-  border: 1px solid rgba(243, 195, 90, .26);
-  transition: color .15s, border-color .15s, background .15s;
-}
-.sound-btn:hover { color: var(--cream); border-color: var(--gold-400); background: rgba(20, 58, 99, .85); }
-.sound-btn svg { width: 20px; height: 20px; fill: currentColor; }
-.sound-btn .icon-off { display: none; }
-.sound-btn.is-muted { color: var(--muted-dim); }
-.sound-btn.is-muted .icon-on { display: none; }
-.sound-btn.is-muted .icon-off { display: block; }
-
-/* --------------------------------------------------------------------------
-   MENU SCREEN
-   -------------------------------------------------------------------------- */
-#menuScreen .menu-inner {
-  width: min(1120px, 100%);
-  display: flex;
-  flex-direction: column;
-  gap: clamp(12px, 2.2vh, 22px);
-}
-
-/* Roster strip */
-.roster {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 12px 20px;
-  border-radius: var(--radius-md);
-  background: rgba(5, 16, 31, .62);
-  border: 1px solid rgba(243, 195, 90, .18);
-}
-.roster-label {
-  font-family: var(--font-display);
-  font-size: 11px;
-  letter-spacing: .28em;
-  text-transform: uppercase;
-  color: var(--gold-400);
-  flex: none;
-}
-.roster-person { display: flex; align-items: center; gap: 11px; }
-.roster-person img {
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  object-fit: cover;
-  object-position: center 18%;
-  background: #e9ddc6;
-  border: 2px solid var(--pc, var(--gold-500));
-  box-shadow: 0 4px 12px rgba(0, 0, 0, .4);
-}
-.roster-person b {
-  display: block;
-  font-family: var(--font-display);
-  font-size: 16px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-.roster-person span { font-size: 11px; font-weight: 600; color: var(--muted-dim); letter-spacing: .06em; }
-.roster-vs {
-  font-family: var(--font-display);
-  font-size: 15px;
-  font-style: italic;
-  letter-spacing: .1em;
-  color: var(--gold-400);
-}
-.roster-note {
-  margin-left: auto;
-  font-size: 11px;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  color: var(--muted-dim);
-  text-align: right;
-  flex: none;
-}
-
-/* Game cards */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: clamp(12px, 1.4vw, 20px);
-}
-
-.card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  min-height: clamp(226px, 36vh, 320px);
-  padding: 22px;
-  text-align: left;
-  overflow: hidden;
-  border-radius: var(--radius-lg);
-  border: 1px solid rgba(255, 255, 255, .09);
-  background: linear-gradient(168deg, rgba(23, 66, 109, .9), rgba(5, 15, 29, .96));
-  box-shadow: var(--shadow-card);
-  transition: transform .22s var(--ease-out), border-color .22s var(--ease-out),
-              box-shadow .22s var(--ease-out);
-}
-
-/* Accent wash keyed to each game. */
-.card::before {
-  content: "";
-  position: absolute;
-  inset: auto -30% -58% -10%;
-  height: 210px;
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--accent) 0%, transparent 68%);
-  opacity: .22;
-  transition: opacity .22s var(--ease-out), transform .3s var(--ease-out);
-  pointer-events: none;
-}
-/* Animated gold border that draws in on hover. */
-.card::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  border: 1px solid var(--gold-400);
-  opacity: 0;
-  transform: scale(1.012);
-  transition: opacity .22s var(--ease-out), transform .22s var(--ease-out);
-  pointer-events: none;
-}
-
-.card:hover,
-.card.is-focus {
-  transform: translateY(-6px);
-  border-color: rgba(243, 195, 90, .5);
-  box-shadow: 0 26px 48px rgba(0, 0, 0, .5), var(--glow-gold);
-}
-.card:hover::before,
-.card.is-focus::before { opacity: .4; transform: translateY(-8px); }
-.card:hover::after,
-.card.is-focus::after { opacity: .85; transform: scale(1); }
-.card:active { transform: translateY(-1px) scale(.988); }
-
-.card-no {
-  font-family: var(--font-display);
-  font-size: 11px;
-  letter-spacing: .3em;
-  color: var(--gold-500);
-  opacity: .8;
-}
-
-.card-art {
-  position: relative;
-  width: 82px;
-  height: 82px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  margin: 2px 0 2px;
-}
-.card-art svg { width: 100%; height: 100%; overflow: visible; }
-/* Idle motion inside the card art, lifted on hover. */
-.card-art .art-move, .intro-art .art-move {
-  transform-origin: 50% 50%;
-  animation: artIdle 3.6s var(--ease-in-out) infinite;
-}
-.card:hover .card-art .art-move,
-.card.is-focus .card-art .art-move { animation-duration: 1.5s; }
-@keyframes artIdle {
-  0%, 100% { transform: translateY(0) rotate(-3deg); }
-  50%      { transform: translateY(-7px) rotate(3deg); }
-}
-
-.card .card-title {
-  display: block;
-  font-family: var(--font-display);
-  font-size: clamp(22px, 2.1vw, 29px);
-  line-height: 1;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--cream);
-  position: relative;
-  z-index: 1;
-}
-.card .card-desc {
-  display: block;
-  position: relative;
-  z-index: 1;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.5;
-  color: #a9bdd2;
-  min-height: 39px;
-}
-
-.card-keys {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: auto;
-  padding-top: 12px;
-  width: 100%;
-  border-top: 1px solid rgba(255, 255, 255, .08);
-}
-.card-keys .who {
-  font-family: var(--font-display);
-  font-size: 10px;
-  letter-spacing: .14em;
-  color: var(--muted-dim);
-  min-width: 42px;
-}
-.card-keys .keycap { min-width: 25px; height: 25px; font-size: 11px; padding: 0 6px; }
-.card-keys .keycap.wide { min-width: 62px; font-size: 9.5px; }
-.card-keys .row { display: flex; align-items: center; gap: 5px; }
-.card-keys .divider { width: 1px; height: 22px; background: rgba(255, 255, 255, .1); margin: 0 3px; }
-
-.menu-hint {
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: .2em;
-  text-transform: uppercase;
-  color: var(--muted-dim);
-}
-.menu-hint b { color: var(--gold-400); font-weight: 700; }
-
-/* --------------------------------------------------------------------------
-   INTRO SCREEN
+   INTRO SCREEN (game briefing)
    -------------------------------------------------------------------------- */
 #introScreen .intro-inner {
-  width: min(720px, 100%);
-  padding: clamp(22px, 4vh, 40px);
+  width: min(760px, 100%);
+  max-height: 100%;
+  padding: clamp(18px, 3.4vh, 36px) clamp(18px, 3vw, 40px);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: clamp(10px, 1.8vh, 18px);
+  gap: clamp(7px, 1.4vh, 14px);
   text-align: center;
+  border-color: color-mix(in srgb, var(--accent, var(--gold-400)) 50%, transparent);
+  animation: riseIn .45s var(--ease-out);
 }
-.intro-art { width: clamp(64px, 11vh, 92px); height: clamp(64px, 11vh, 92px); }
-.intro-art svg { width: 100%; height: 100%; overflow: visible; }
+.intro-kicker {
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: .34em;
+  margin-right: -.34em;
+  text-transform: uppercase;
+  color: var(--gold-400);
+}
+.intro-art { width: clamp(56px, 10vh, 88px); height: clamp(56px, 10vh, 88px); }
+.intro-art svg, .intro-art img { width: 100%; height: 100%; overflow: visible; object-fit: contain; }
 .intro-inner h2 {
   font-family: var(--font-display);
-  font-size: clamp(34px, 5.4vw, 56px);
+  font-size: clamp(32px, 5.2vw, 56px);
   letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--cream);
   line-height: .95;
 }
+.intro-mode {
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: var(--accent, var(--gold-300));
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent, var(--gold-400)) 55%, transparent);
+}
 .intro-rule { width: min(360px, 76%); }
 .intro-rules {
-  max-width: 480px;
+  max-width: 520px;
   font-size: 15px;
   font-weight: 500;
   line-height: 1.6;
@@ -598,23 +536,44 @@
 }
 .ctrl {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 9px;
-  padding: 14px 12px;
+  gap: 12px;
+  padding: 12px 14px;
   border-radius: var(--radius-md);
   background: rgba(5, 16, 31, .66);
   border: 1px solid rgba(255, 255, 255, .08);
-  border-top: 2px solid var(--pc, var(--gold-500));
+  border-top: 3px solid var(--pc, var(--gold-500));
+  text-align: left;
+}
+.ctrl-face {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #e9ddc6;
+  border: 2px solid var(--pc);
+}
+.ctrl-face img { width: 100%; height: 100%; object-fit: cover; }
+.ctrl-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ctrl-slot {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: .22em;
+  color: var(--muted);
 }
 .ctrl-name {
   font-family: var(--font-display);
-  font-size: 15px;
-  letter-spacing: .16em;
+  font-size: 16px;
+  letter-spacing: .12em;
   text-transform: uppercase;
-  color: var(--pc, var(--cream));
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.ctrl-keys { display: flex; gap: 6px; align-items: center; }
+.ctrl-keys { display: flex; gap: 5px; align-items: center; flex: none; }
+.ctrl-keys .keycap { min-width: 30px; height: 30px; font-size: 13px; padding: 0 6px; }
 
 .intro-actions { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
 
@@ -969,11 +928,12 @@
   flex: none;
   margin-top: -2px;
 }
-.result-portrait img {
+.result-portrait .rp-crop {
+  position: relative;
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  object-position: center 16%;
+  overflow: hidden;
   border-radius: 50%;
   background: #e9ddc6;
   border: 3px solid var(--gold-400);
@@ -994,9 +954,7 @@
   100% { opacity: 1; transform: none; }
 }
 /* Draw state shows the emblem instead of a winner portrait. */
-.result-portrait.is-draw img {
-  object-fit: contain;
-  object-position: center;
+.result-portrait.is-draw .rp-crop {
   background: transparent;
   border-color: rgba(243, 195, 90, .4);
 }
@@ -1032,8 +990,6 @@
 }
 .result-score i { font-style: normal; color: var(--gold-600); font-size: 22px; }
 .result-score .sc { min-width: 46px; }
-.result-score .sc.zima { color: #7fb7f0; }
-.result-score .sc.shaza { color: #c79ad8; }
 .result-text {
   font-size: 13.5px;
   font-weight: 500;
@@ -1043,17 +999,40 @@
 }
 .result-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
 
+.result-actions .btn.is-default { box-shadow: 0 5px 0 var(--gold-700), 0 0 0 3px rgba(243, 195, 90, .3), 0 12px 22px rgba(0, 0, 0, .4); }
+
+/* --- Play bar extras ----------------------------------------------------- */
+.pause-btn { gap: 8px; }
+.play-tag {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--gold-300);
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(243, 195, 90, .4);
+  background: rgba(7, 23, 40, .7);
+  white-space: nowrap;
+}
+
+/* Paused: freeze in-arena DOM animations (countdown, banner, HUD pulses). */
+#playScreen.is-paused .countdown-layer *,
+#playScreen.is-paused .banner-layer *,
+#playScreen.is-paused .hud * { animation-play-state: paused !important; }
+#playScreen.is-paused .canvas-frame { filter: saturate(.55) brightness(.7); transition: filter .2s; }
+
 /* --------------------------------------------------------------------------
    Responsive - the arcade targets laptops and desktops.
    -------------------------------------------------------------------------- */
 @media (max-width: 900px) {
-  .cards { grid-template-columns: 1fr; gap: 10px; }
-  .card { min-height: 0; flex-direction: row; align-items: center; gap: 16px; flex-wrap: wrap; }
-  .card-art { width: 56px; height: 56px; }
-  .card-keys { width: 100%; }
-  .roster-note { display: none; }
   .intro-controls { grid-template-columns: 1fr; }
   .stage { --stage-chrome: 190px; }
+  .welcome-foot .wf-ticker { display: none; }
+}
+
+@media (max-height: 820px) {
+  .intro-rules { font-size: 14px; line-height: 1.5; }
 }
 
 @media (max-height: 700px) {
@@ -1062,4 +1041,12 @@
   .hud-face { width: 36px; height: 36px; }
   .hud-center { min-width: 112px; }
   .hud-value { font-size: 23px; }
+  .intro-art { display: none; }
 }
+
+/* --------------------------------------------------------------------------
+   Character crops. Faces and tiles are square overflow:hidden boxes; the
+   <img> inside is positioned from the registry trim data (ESA.headStyle).
+   -------------------------------------------------------------------------- */
+.hud-face { position: relative; display: block; overflow: hidden; }
+.hud-face img, .rp-crop img { display: block; }
