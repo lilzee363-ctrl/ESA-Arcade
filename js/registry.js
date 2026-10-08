@@ -21,6 +21,18 @@
   var games = [];
   var byId = Object.create(null);
 
+  function normaliseTouch(t) {
+    t = t || {};
+    return {
+      movement: t.movement === "none" ? "none" : "joystick",
+      actions: (t.actions || []).filter(function (a) { return a && a.id; }),
+      interaction: t.interaction || null,
+      help: (t.help || ["JOYSTICK — MOVE"]).slice(),
+      tagline: t.tagline || "",          // touch wording for menus (optional)
+      description: t.description || ""
+    };
+  }
+
   ESA.Games = {
     /**
      *   id                  unique key
@@ -35,7 +47,18 @@
      *   canTie              true if the game can end level
      *   tournamentEligible  enters the Tournament game draw
      *   enabled             false hides it everywhere
-     *   create(api, setup)  returns a new game instance
+     *   powerUps            optional { enabled, types: [...] } - opts into the
+     *                       shared power-up system (js/powerups.js). Omit
+     *                       or set enabled: false for games without them.
+     *   touch               optional touch-device controls:
+     *                         { movement: "joystick" | "none",
+     *                           actions: [{ id: "action1", label: "DASH" }],
+     *                           interaction: "directTap" (game.onTap),
+     *                           help: ["JOYSTICK — MOVE", ...] }
+     *   forContext(context) optional: { mode, hud } overrides for a match
+     *                       context, e.g. a shorter tournament format
+     *   create(api, setup)  returns a new game instance. api.context is the
+     *                       match context ({ mode: "casual" | "tournament" })
      */
     register: function (def) {
       if (!def || !def.id || byId[def.id] || typeof def.create !== "function") {
@@ -55,6 +78,11 @@
         canTie: !!def.canTie,
         tournamentEligible: def.tournamentEligible !== false,
         enabled: def.enabled !== false,
+        powerUps: (def.powerUps && def.powerUps.enabled)
+          ? { enabled: true, types: (def.powerUps.types || []).slice() }
+          : { enabled: false, types: [] },
+        touch: normaliseTouch(def.touch),
+        forContext: typeof def.forContext === "function" ? def.forContext : null,
         create: def.create
       };
       games.push(g);
@@ -62,6 +90,15 @@
     },
 
     get: function (id) { return byId[id] || null; },
+
+    /** Display info (mode label, HUD) for a game in a given match context. */
+    resolve: function (g, context) {
+      var o = g && g.forContext ? g.forContext(context || { mode: "casual" }) : null;
+      return {
+        mode: (o && o.mode) || g.mode,
+        hud: (o && o.hud) || g.hud
+      };
+    },
 
     /** Enabled games in registration order. */
     list: function () {

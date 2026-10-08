@@ -84,7 +84,9 @@
         welcome.tickerIndex = (welcome.tickerIndex + 1) % TICKER.length;
         ticker.classList.remove("is-in");
         void ticker.offsetWidth;
-        ticker.innerHTML = TICKER[welcome.tickerIndex];
+        var line = TICKER[welcome.tickerIndex];
+        if (ESA.Touch && ESA.Touch.active) line = line.replace("One keyboard", "One screen");
+        ticker.innerHTML = line;
         ticker.classList.add("is-in");
       });
     },
@@ -162,6 +164,9 @@
     chars: [],
     cols: 1,
     cursor: { p1: 0, p2: 0 },
+    // SELECT -> CONFIRM -> LOCKED IN. `pending` is a chosen-but-unconfirmed
+    // fighter; only Confirm turns it into `locked`.
+    pending: { p1: null, p2: null },
     locked: { p1: null, p2: null },
     tiles: [],
     readyGen: 0
@@ -183,6 +188,23 @@
    */
   function sizeRoster(host, wrap, n, cols, opts) {
     opts = opts || {};
+
+    /*
+     * Explicit breakpoints win. Touch layouts (and short windows) scroll, so
+     * the roster box's height there depends on the tiles themselves -
+     * measuring it gave a different column count on every visit (and on
+     * every mobile URL-bar resize). Those layouts declare --roster-cols in
+     * CSS instead and size the tiles with pure CSS; we only read the count
+     * back for keyboard navigation and clear any stale measured values.
+     */
+    var fixed = parseInt(getComputedStyle(host).getPropertyValue("--roster-cols"), 10);
+    if (fixed > 0) {
+      host.style.removeProperty("--cols");
+      host.style.removeProperty("--tile");
+      host.classList.add("is-fixed-grid");
+      return fixed;
+    }
+    host.classList.remove("is-fixed-grid");
     var gap = opts.gap || 12;
     var label = opts.label || 28;
     var maxTile = opts.max || 196;
@@ -258,85 +280,166 @@
       side.innerHTML =
         '<div class="cs-side-head"><span class="slot-tag">' + ctl.short + '</span>' +
           '<span class="cs-state">Selecting</span></div>' +
-        '<div class="cs-portrait"><span class="cs-portrait-glow"></span><img class="cs-art" alt="" />' +
+        '<div class="cs-portrait art-box"><span class="cs-portrait-glow"></span>' +
+          '<span class="art-frame cs-art"><img class="art-img" alt="" draggable="false" /></span>' +
           '<span class="cs-stamp">Locked In</span></div>' +
         '<div class="cs-name"></div>' +
         '<div class="cs-tagline"></div>' +
         '<div class="cs-keys">' +
-          '<span class="keycap wide">' + esc(ctl.selectLabel.move) + '</span><span>move</span>' +
-          '<span class="keycap wide">' + esc(ctl.selectLabel.lock) + '</span><span class="cs-lock-word">lock in</span>' +
+          '<span class="keycap wide">' + esc(ctl.selectLabel.move) + '</span><span class="cs-move-word">move</span>' +
+          '<span class="keycap wide">' + esc(ctl.selectLabel.lock) + '</span><span class="cs-lock-word">select</span>' +
         "</div>" +
-        '<button class="btn btn-ghost btn-small cs-change" type="button">Change</button>';
-      side.querySelector(".cs-change").addEventListener("click", function () { csToggleLock(slot); });
+        '<button class="btn btn-ghost btn-small cs-change" type="button">Change</button>' +
+        // Confirmation step (shown while a fighter is selected but not locked).
+        '<div class="cs-confirm" role="group">' +
+          '<div class="cs-ask">Select <b class="cs-ask-name"></b>?</div>' +
+          '<div class="cs-confirm-row">' +
+            '<button class="btn btn-gold btn-small cs-ok" type="button">&#10003; Confirm</button>' +
+            '<button class="btn btn-ghost btn-small cs-no" type="button">Change</button>' +
+          "</div>" +
+          '<div class="cs-confirm-keys desk-only"><span class="keycap">' + esc(ctl.selectLabel.lock) +
+            '</span> confirm &middot; <span class="keycap">' + esc(ctl.selectLabel.move) + "</span> change</div>" +
+        "</div>" +
+        '<div class="cs-lockflash" aria-hidden="true"><span class="cs-lf-who"></span><span class="cs-lf-word">Locked In</span></div>';
+      side.querySelector(".cs-change").addEventListener("click", function () { csUnlock(slot); });
+      side.querySelector(".cs-ok").addEventListener("click", function () { csConfirm(slot); });
+      side.querySelector(".cs-no").addEventListener("click", function () { csCancelPending(slot, true); });
     });
+  }
+
+  function csSide(slot) { return byId(slot === "p1" ? "csSideP1" : "csSideP2"); }
+
+  /** The slot a mouse click / tap applies to: P1 until locked, then P2. */
+  function csPointerSlot() {
+    return cs.locked.p1 === null ? "p1" : (cs.locked.p2 === null ? "p2" : null);
   }
 
   function csRender() {
     cs.tiles.forEach(function (t, i) {
       t.classList.toggle("has-p1", cs.cursor.p1 === i);
       t.classList.toggle("has-p2", cs.cursor.p2 === i);
+      t.classList.toggle("pending-p1", cs.pending.p1 === i);
+      t.classList.toggle("pending-p2", cs.pending.p2 === i);
       t.classList.toggle("locked-p1", cs.locked.p1 === i);
       t.classList.toggle("locked-p2", cs.locked.p2 === i);
     });
+    var turn = csPointerSlot();
     ESA.SLOTS.forEach(function (slot) {
-      var side = byId(slot === "p1" ? "csSideP1" : "csSideP2");
-      var idx = cs.locked[slot] !== null ? cs.locked[slot] : cs.cursor[slot];
-      var c = cs.chars[idx];
+      var side = csSide(slot);
       var locked = cs.locked[slot] !== null;
+      var pending = !locked && cs.pending[slot] !== null;
+      var idx = locked ? cs.locked[slot] : (pending ? cs.pending[slot] : cs.cursor[slot]);
+      var c = cs.chars[idx];
       side.classList.toggle("is-locked", locked);
+      side.classList.toggle("is-pending", pending);
+      side.classList.toggle("is-turn", turn === slot);
       if (!c) return;
       side.style.setProperty("--cc", c.color);
       ESA.setArt(side.querySelector(".cs-art"), c, locked ? "selected" : "normal", "body");
       side.querySelector(".cs-name").textContent = c.displayName;
       side.querySelector(".cs-tagline").textContent = c.tagline || "";
-      side.querySelector(".cs-state").textContent = locked ? "Ready" : "Selecting";
-      side.querySelector(".cs-lock-word").textContent = locked ? "change" : "lock in";
+      side.querySelector(".cs-ask-name").textContent = c.displayName;
+      side.querySelector(".cs-state").textContent = locked ? "Ready" : (pending ? "Confirm?" : "Selecting");
+      side.querySelector(".cs-lock-word").textContent = locked ? "change" : (pending ? "confirm" : "select");
     });
+    var hint = byId("csTouchHint");
+    if (hint) {
+      hint.innerHTML = !turn ? "Both fighters locked in!"
+        : (cs.pending[turn] !== null
+            ? 'Tap <b>Confirm</b> to lock in <b class="t-' + turn + '">' + turn.toUpperCase() + "</b> &middot; or tap another fighter"
+            : 'Tap a fighter for <b class="t-' + turn + '">' + turn.toUpperCase() + "</b>" +
+              (turn === "p1" ? ', then one for <b class="t-p2">P2</b>' : ""));
+    }
   }
 
   function csMove(slot, dir) {
     if (cs.locked[slot] !== null || !cs.chars.length) return;
-    var next = gridMove(cs.cursor[slot], dir, cs.chars.length, cs.cols);
-    if (next === cs.cursor[slot]) return;
+    var from = cs.pending[slot] !== null ? cs.pending[slot] : cs.cursor[slot];
+    var next = gridMove(from, dir, cs.chars.length, cs.cols);
+    var hadPending = cs.pending[slot] !== null;
+    cs.pending[slot] = null;               // moving away = Change
+    if (next === cs.cursor[slot] && !hadPending) return;
     cs.cursor[slot] = next;
     ESA.Audio.play("uiMove");
     csRender();
-    var side = byId(slot === "p1" ? "csSideP1" : "csSideP2");
-    replay(side.querySelector(".cs-portrait"), "is-swap");
+    replay(csSide(slot).querySelector(".cs-portrait"), "is-swap");
   }
 
-  function csToggleLock(slot) {
-    if (!cs.chars.length) return;
-    if (cs.locked[slot] !== null) {
-      cs.locked[slot] = null;
-      cs.readyGen++;                       // cancels a pending "both ready" advance
-      byId("charSelectScreen").classList.remove("is-ready");
-      ESA.Audio.play("unlock");
-    } else {
-      var c = cs.chars[cs.cursor[slot]];
-      if (c.slots.indexOf(slot) < 0) { ESA.Audio.play("denied"); return; }
-      cs.locked[slot] = cs.cursor[slot];
-      ESA.Audio.play("lockIn");
-      var side = byId(slot === "p1" ? "csSideP1" : "csSideP2");
-      replay(side, "just-locked");
-    }
+  /** Step 1: highlight a fighter and ask for confirmation. Never locks. */
+  function csSelect(slot, i) {
+    if (!cs.chars.length || cs.locked[slot] !== null) return;
+    var c = cs.chars[i];
+    if (!c) return;
+    if (c.slots.indexOf(slot) < 0) { ESA.Audio.play("denied"); return; }
+    var changed = cs.pending[slot] !== i || cs.cursor[slot] !== i;
+    cs.cursor[slot] = i;
+    cs.pending[slot] = i;
+    ESA.Audio.play("toggleOn");
+    csRender();
+    if (changed) replay(csSide(slot).querySelector(".cs-portrait"), "is-swap");
+    replay(csSide(slot).querySelector(".cs-confirm"), "is-in");
+  }
+
+  /** Step 2: Confirm turns the pending choice into a lock. */
+  function csConfirm(slot) {
+    if (App.state !== "charSelect" || cs.locked[slot] !== null || cs.pending[slot] === null) return;
+    var c = cs.chars[cs.pending[slot]];
+    if (!c || c.slots.indexOf(slot) < 0) { ESA.Audio.play("denied"); return; }
+    cs.locked[slot] = cs.pending[slot];
+    cs.cursor[slot] = cs.pending[slot];
+    cs.pending[slot] = null;
+    ESA.Audio.play("lockIn");
+    var side = csSide(slot);
+    side.querySelector(".cs-lf-who").textContent = ESA.CONTROLS[slot].short + " · " + c.displayName;
+    replay(side, "just-locked");
+    replay(side.querySelector(".cs-lockflash"), "is-on");
     csRender();
     csCheckReady();
   }
 
+  /** Change before confirming: drop the preview, stay on the screen. */
+  function csCancelPending(slot, sound) {
+    if (cs.pending[slot] === null) return false;
+    cs.pending[slot] = null;
+    if (sound) ESA.Audio.play("unlock");
+    csRender();
+    return true;
+  }
+
+  /** Change after locking in (existing behaviour). */
+  function csUnlock(slot) {
+    if (cs.locked[slot] === null) return;
+    cs.locked[slot] = null;
+    cs.pending[slot] = null;
+    cs.readyGen++;                         // cancels a pending "both ready" advance
+    byId("charSelectScreen").classList.remove("is-ready");
+    ESA.Audio.play("unlock");
+    csRender();
+  }
+
+  /** Keyboard select key: select -> confirm, or unlock when already locked. */
+  function csLockKey(slot) {
+    if (!cs.chars.length) return;
+    if (cs.locked[slot] !== null) csUnlock(slot);
+    else if (cs.pending[slot] !== null) csConfirm(slot);
+    else csSelect(slot, cs.cursor[slot]);
+  }
+
   function csClickTile(i) {
     if (App.state !== "charSelect") return;
-    var slot = cs.locked.p1 === null ? "p1" : (cs.locked.p2 === null ? "p2" : null);
+    var slot = csPointerSlot();
     if (!slot) return;
-    cs.cursor[slot] = i;
-    csToggleLock(slot);
+    // Tapping the already-selected fighter again does NOT confirm - an
+    // accidental double tap must never lock someone in.
+    if (cs.pending[slot] === i) { replay(csSide(slot).querySelector(".cs-confirm"), "is-nudge"); return; }
+    csSelect(slot, i);
   }
 
   function csCheckReady() {
     if (cs.locked.p1 === null || cs.locked.p2 === null) return;
     var gen = ++cs.readyGen;
     byId("charSelectScreen").classList.add("is-ready");
-    App.timers.after(720, function () {
+    App.timers.after(900, function () {
       if (gen !== cs.readyGen || App.state !== "charSelect") return;
       App.session.setup = { p1: cs.chars[cs.locked.p1].id, p2: cs.chars[cs.locked.p2].id };
       App.go("vs");
@@ -348,9 +451,17 @@
     parent: "mode",
     crumb: "Casual · Character Select",
     ownsConfirmKeys: true,
+    // Back first cancels an unconfirmed selection, then leaves as before.
+    back: function () {
+      var dropped = false;
+      ESA.SLOTS.forEach(function (slot) { if (csCancelPending(slot, false)) dropped = true; });
+      ESA.Audio.play("uiBack");
+      if (!dropped) App.go("mode");
+    },
     enter: function () {
       cs.chars = ESA.Characters.list();
       cs.locked.p1 = cs.locked.p2 = null;
+      cs.pending.p1 = cs.pending.p2 = null;
       cs.readyGen++;
       byId("charSelectScreen").classList.remove("is-ready");
 
@@ -375,12 +486,12 @@
       else if (code === p1.down) csMove("p1", "down");
       else if (code === p1.left) csMove("p1", "left");
       else if (code === p1.right) csMove("p1", "right");
-      else if (code === p1.lock) csToggleLock("p1");
+      else if (code === p1.lock) csLockKey("p1");
       else if (code === p2.up) csMove("p2", "up");
       else if (code === p2.down) csMove("p2", "down");
       else if (code === p2.left) csMove("p2", "left");
       else if (code === p2.right) csMove("p2", "right");
-      else if (code === p2.lock || code === "NumpadEnter") csToggleLock("p2");
+      else if (code === p2.lock || code === "NumpadEnter") csLockKey("p2");
     }
   });
 
@@ -389,8 +500,7 @@
    * ================================================================== */
   function vsHalf(who, slot) {
     var c = who.character;
-    return '<div class="vs-art-wrap"><img class="vs-art" src="' + esc(c.art.selected) + '" alt="" style="' +
-           esc(ESA.bodyStyle(c)) + '" /></div>' +
+    return '<div class="vs-art-wrap art-box">' + ESA.bodyArtHTML(c, "selected", "vs-art") + "</div>" +
            '<div class="vs-plate"><span class="vs-slot">' + ESA.CONTROLS[slot].short + "</span>" +
            '<span class="vs-name">' + esc(who.name) + "</span></div>";
   }
@@ -437,13 +547,29 @@
         '<span class="cab-title">' + esc(g.title) + "</span></span>" +
       '<span class="cab-screen"><span class="cab-art">' + ESA.Games.iconHTML(g) + "</span>" +
         '<span class="cab-mode">' + esc(g.mode) + "</span></span>" +
-      '<span class="cab-desc">' + esc(g.tagline) + "</span>" +
-      '<span class="cab-panel">' +
+      '<span class="cab-desc"><span class="desk-only">' + esc(g.tagline) + '</span>' +
+        '<span class="touch-only">' + esc(g.touch.tagline || g.tagline) + "</span></span>" +
+      '<span class="cab-panel desk-only">' +
         '<span class="cab-ctrl"><span class="who">P1</span>' + p1.caps.map(function (k) { return '<span class="keycap">' + esc(k) + "</span>"; }).join("") + "</span>" +
         '<span class="cab-ctrl"><span class="who">P2</span>' + p2.caps.map(function (k) { return '<span class="keycap">' + esc(k) + "</span>"; }).join("") + "</span>" +
       "</span>" +
-      '<span class="cab-play">&#9654; Press Enter to Play</span>';
+      '<span class="cab-panel cab-touch touch-only">' + touchSummaryHTML(g) + "</span>" +
+      '<span class="cab-play"><span class="desk-only">&#9654; Press Enter to Play</span>' +
+        '<span class="touch-only">&#9654; Tap to Play</span></span>';
   }
+
+  /** Touch controls in plain words, e.g. "Joystick · DASH" / "Tap to bonk". */
+  function touchSummary(g) {
+    var t = g.touch || {}, parts = [];
+    if (t.movement === "joystick") parts.push("Joystick");
+    (t.actions || []).forEach(function (a) { parts.push(a.label); });
+    if (t.interaction === "directTap") parts.push("Tap to play");
+    return parts;
+  }
+  function touchSummaryHTML(g) {
+    return touchSummary(g).map(function (p) { return '<span class="tchip">' + esc(p) + "</span>"; }).join("");
+  }
+  ESA.touchSummaryHTML = touchSummaryHTML;
 
   function libBuild() {
     var host = byId("libCarousel");
@@ -456,6 +582,7 @@
       b.innerHTML = cabinetHTML(g, i);
       b.addEventListener("click", function () {
         if (App.state !== "library") return;
+        if (lib.swiped) { lib.swiped = false; return; }
         if (i === lib.index) libOpen();
         else libSelect(i);
       });
@@ -567,6 +694,26 @@
       ESA.Audio.play("uiBack");
       App.go("charSelect");
     });
+    // Swipe left / right on touch screens browses the floor.
+    var sw = null;
+    var car = byId("libCarousel");
+    car.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "mouse") return;
+      sw = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      lib.swiped = false;
+    });
+    car.addEventListener("pointerup", function (e) {
+      if (!sw || sw.id !== e.pointerId) return;
+      var dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+      sw = null;
+      if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 1.2 && App.state === "library") {
+        lib.swiped = true;                       // swallow the click that follows
+        libSelect(lib.index + (dx < 0 ? 1 : -1));
+        setTimeout(function () { lib.swiped = false; }, 400);
+      }
+    });
+    car.addEventListener("pointercancel", function () { sw = null; });
+
     // Mouse wheel browses the floor too.
     var wheelLock = 0;
     byId("libCarousel").addEventListener("wheel", function (e) {
@@ -587,6 +734,7 @@
   function introStart() {
     var p = App.params;
     if (!p || !p.def) return;
+    if (ESA.Touch && ESA.Touch.active) ESA.Touch.enterImmersive();
     App.startMatch(p.def, p.setup, p.context);
   }
 
@@ -602,8 +750,9 @@
       var isTour = p.context && p.context.mode === "tournament";
       byId("introKicker").textContent = isTour ? (p.context.tag || "Tournament Match") : "Casual Match";
       byId("introTitle").textContent = g.title;
-      byId("introMode").textContent = g.mode;
-      byId("introRules").innerHTML = g.description;
+      byId("introMode").textContent = ESA.Games.resolve(g, p.context).mode;
+      byId("introRules").innerHTML = '<span class="desk-only">' + g.description + '</span>' +
+        '<span class="touch-only">' + (g.touch.description || g.description) + "</span>";
       byId("introArt").innerHTML = ESA.Games.iconHTML(g);
       byId("introScreen").style.setProperty("--accent", g.accent);
 
@@ -614,7 +763,9 @@
                   '<span class="ctrl-face">' + portraitImg(w.character) + "</span>" +
                   '<span class="ctrl-text"><span class="ctrl-slot">' + ESA.CONTROLS[slot].short + "</span>" +
                   '<span class="ctrl-name">' + esc(w.name) + "</span></span>" +
-                  '<span class="ctrl-keys">' + capsHTML(slot, g.controls) + "</span>" +
+                  '<span class="ctrl-keys desk-only">' + capsHTML(slot, g.controls) + "</span>" +
+                  '<span class="ctrl-touch touch-only">' + touchSummaryHTML(g) +
+                    '<span class="tside">' + (slot === "p1" ? "Left side" : "Right side") + "</span></span>" +
                 "</div>";
       });
       byId("introControls").innerHTML = html;

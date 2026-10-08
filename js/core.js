@@ -296,6 +296,32 @@ window.ESA = window.ESA || {};
           A.tone({ freq: 784, dur: .1, type: "square", gain: .045, delay: .56 });
           A.tone({ freq: 1046, dur: .5, type: "square", gain: .06, delay: .68 });
           break;
+        /* --- Air Hockey / power-ups ----------------------------------- */
+        case "puckHit":
+          A.noise({ dur: .05, freq: 3000, freqTo: 900, filter: "bandpass", gain: .07, decay: 3 });
+          A.tone({ freq: 620, to: 380, dur: .05, type: "square", gain: .03 });
+          break;
+        case "puckWall":    A.tone({ freq: 260, to: 200, dur: .04, type: "triangle", gain: .04 }); break;
+        case "goal":
+          A.noise({ dur: .4, freq: 500, freqTo: 3200, filter: "bandpass", gain: .1, decay: 1.4 });
+          A.tone({ freq: 392, dur: .1, type: "square", gain: .05 });
+          A.tone({ freq: 587, dur: .1, type: "square", gain: .05, delay: .09 });
+          A.tone({ freq: 784, dur: .24, type: "square", gain: .055, delay: .18 });
+          break;
+        case "powerSpawn":
+          A.tone({ freq: 660, to: 990, dur: .08, type: "sine", gain: .04 });
+          A.tone({ freq: 990, to: 1320, dur: .1, type: "sine", gain: .035, delay: .08 });
+          break;
+        case "gara":
+          A.tone({ freq: 520, to: 330, dur: .16, type: "sawtooth", gain: .045 });
+          A.tone({ freq: 440, to: 260, dur: .2, type: "sawtooth", gain: .045, delay: .16 });
+          A.tone({ freq: 660, to: 880, dur: .14, type: "square", gain: .04, delay: .38 });
+          break;
+        case "shrink":      A.tone({ freq: 880, to: 220, dur: .22, type: "square", gain: .045 }); break;
+        case "reverse":
+          A.tone({ freq: 330, to: 660, dur: .1, type: "square", gain: .04 });
+          A.tone({ freq: 660, to: 330, dur: .12, type: "square", gain: .04, delay: .1 });
+          break;
         default: break;
       }
     }
@@ -310,7 +336,7 @@ window.ESA = window.ESA || {};
   var GAME_KEYS = [
     "KeyW", "KeyA", "KeyS", "KeyD",
     "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-    "KeyJ", "KeyK", "KeyL", "Space"
+    "KeyJ", "KeyK", "KeyL", "Space", "Enter", "NumpadEnter"
   ];
   var MENU_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"];
 

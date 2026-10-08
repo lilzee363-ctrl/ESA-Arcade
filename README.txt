@@ -56,16 +56,66 @@ Gameplay size and collisions come from the same visible-art rectangle
 (ESA.spriteSize / ESA.bodyBounds in js/characters.js). Coin Rush pickups use
 a centred body box, not the feet. Open index.html?hitbox to draw the boxes.
 
+TOUCH DEVICES (phones, tablets, touchscreen laptops)
+---------------------------------------------------
+Touch mode switches on automatically on phones/tablets, or on a laptop the
+moment someone touches the screen (typing game keys switches it back off).
+Force it for testing with  index.html?touch=1  (or ?touch=0).
+
+Desktop and touch are separate presentations (body.is-touch); desktop
+looks and plays exactly as before.
+
+  Menus           designed for portrait (touch wording: Tap to Start, Tap to
+                  choose, swipe the arcade floor); safe-area aware.
+  Entering a game ROTATE TO PLAY (3-2-1, never blocks) -> how-to card with
+                  PLAY / CONTROLS / BACK (auto-starts after 6 s).
+  Gameplay        ALWAYS landscape. If the phone stays portrait (or rotation
+                  lock is on) the play scene is drawn rotated, so turning the
+                  phone gives a full-screen landscape game. Android also gets
+                  fullscreen + landscape lock when Start is tapped.
+  HUD             slim bar: pause, scores / clock, gear (Controls).
+  Controls        compact translucent joystick that floats to your thumb
+                  anywhere on your half, plus action buttons where needed.
+  Air Hockey      joystick + DASH          Coin Rush / Bomb Pass  joystick only
+  Bonk Booth      tap the holes directly - head-to-head layout, each player
+                  owns one half of the screen.
+  Controls setup  gear button, pause menu or how-to card: drag controls,
+                  Size, Visibility, Swap, Reset. P1 and P2 each have their
+                  own layout and zone.
+
+Control preferences live in localStorage key "esaArcade.touchControls.v1"
+(positions normalized 0..1, sizes, opacity). Nothing else is stored.
+
+INPUT ARCHITECTURE: games read ESA.Controls.vector(slot) (normalized move)
+and receive game.onAction(slot, "action1"). Keyboard and the touch joystick
+are providers; a future CPU registers one more. Registry entries declare
+  touch: { movement: "joystick"|"none", actions: [{id, label}],
+           interaction: "directTap", help: [...] }
+Files: js/controls.js, js/touch.js, css/touch.css.
+
 Controls belong to the PLAYER SLOT, not the character:
-   P1  W A S D (move)  ·  A S D (Bonk Booth)  ·  Space = lock in
-   P2  Arrow keys      ·  J K L (Bonk Booth)  ·  Enter = lock in
+   P1  W A S D (move)  ·  A S D (Bonk Booth)  ·  Space = select / confirm
+   P2  Arrow keys      ·  J K L (Bonk Booth)  ·  Enter = select / confirm
+   Character select is SELECT -> CONFIRM -> LOCKED IN: the first press,
+   click or tap only previews a fighter; Confirm (or the select key again)
+   locks in; Change / moving / tapping another fighter / Back cancels the
+   preview. Mouse and touch pick for P1 first, then P2.
+   Roster grids (Casual + Who's Playing) use explicit column counts on
+   touch: phone portrait 3, tablet portrait 4, phone landscape 6, tablet
+   landscape 3 (Casual) / 6 (Who's Playing). Desktop keeps its fitted grid.
+   Menu art (VS, select panels, Final, Champion) is framed from the trim data
+   so every fighter stands at the same height in every browser; optional
+   per-character  ui: { scale, offsetX, offsetY }  in js/characters.js tunes
+   menu art only (never gameplay).
+   Air Hockey: P1 Space = dash, P2 Enter = dash (ESA.CONTROLS[slot].action)
 
 
 ADDING A NEW GAME
 -----------------
 Write the game file, call ESA.Games.register({...}) at its bottom (see the
 header of js/registry.js for the contract) and add a <script> tag in
-index.html before js/app.js. The Game Library and the Tournament draw pick
+index.html before js/app.js. A game whose format changes per mode can add
+forContext(context) -> { mode, hud }; the game itself reads api.context. The Game Library and the Tournament draw pick
 it up automatically. Set tournamentEligible: false to keep it out of the
 draw.
 
@@ -75,6 +125,47 @@ GAMES
 1) Bomb Pass          First to 3 rounds         P1 WASD  /  P2 Arrows
 2) Coin Rush          60 seconds (can tie)      P1 WASD  /  P2 Arrows
 3) Bonk Booth         42 seconds (can tie)      P1 A S D /  P2 J K L
+                      +1 correct hole, -1 wrong hole / empty booth, -2 bomb;
+                      one attempt per pop-up (mashing loses); speeds up
+                      over the round. Scores can go negative.
+4) Air Hockey         First to 5 / Tournament: first to 3 OR 90 s
+                                                P1 WASD+Space / P2 Arrows+Enter
+
+TOURNAMENT AIR HOCKEY CLOCK: 1:30 of LIVE play only (frozen during the
+kickoff countdown, goal celebrations, pause and banners). First to 3 wins
+early; at 0:00 the leader wins; a tie goes to SUDDEN DEATH - next goal
+wins, no clock, every power-up effect cleared and no new pickups.
+
+AIR HOCKEY: the characters ARE the mallets. Everyone shares one circular
+collider (MALLET_R) no matter how wide their art is; the sprite is drawn
+at a standard size on top of it. Each player is locked to their own half.
+Conceding swaps to the hurt sprite until the faceoff. Power-ups spawn
+near the centre line (one at a time, every 15-22 s of play) and always
+hit the OPPONENT of whoever grabs them:
+   SMACK               a random OTHER ESA member runs in: 3.0 s stun
+   GARA EH YA AMR??!!  speech-bubble meltdown: 3.0 s stun
+   SHRINK              sprite AND collider drop to 58% for 7.0 s
+   REVERSE             movement keys inverted for 7.0 s (dash key unchanged)
+The same effect never stacks or extends. When an effect ends naturally the
+player gets 2.0 s of status immunity (pickups aimed at them show IMMUNE!).
+A goal clears every effect. The match context passes the target score,
+so Tournament Mode reuses the same game with first-to-3.
+
+
+POWER-UPS (shared, for movement games)
+--------------------------------------
+js/status-effects.js  ESA.StatusEffects: per-player stunned / shrunk /
+                      reversed + immunity, on a caller-supplied clock.
+js/powerups.js        ESA.PowerUps: pickup types, spawner, and Session
+                      (spawn, pickup, targeting, cameo/bubble, status pills).
+Opt in with  powerUps: { enabled: true, types: [...] }  in the registry
+entry and ESA.PowerUps.createSession(config, { players, spawn, ... }) in
+the game (returns null when disabled). The game supplies one adapter per
+player (getAnchor, getReach, showHurtSprite, restoreNormalSprite, nudge,
+onStatusChange) and reads isStunned / isReversed / colliderScale /
+visualScale. No timers: the session clock only advances in update(), so
+pause freezes every effect and destroy() leaves nothing behind. See the
+header of js/powerups.js. Games without power-ups simply omit the field.
 
 
 TOURNAMENT RULES
@@ -116,7 +207,13 @@ js/characters.js        CHARACTER REGISTRY, slot controls, movement, sprites.
 js/registry.js          GAME REGISTRY.
 js/arena.js             ESA.Stage (canvas) and ESA.UI (HUD, results).
 js/bombpass.js          Game 1.        js/coinrush.js   Game 2.
-js/bonkbooth.js         Game 3.
+js/bonkbooth.js         Game 3.        js/airhockey.js  Game 4.
+js/controls.js          ESA.Controls: normalized input from keyboard / touch / (future CPU).
+js/touch.js             ESA.Touch: touch mode, joystick + buttons (multitouch),
+                        rotate-to-play, Control Setup, saved preferences.
+css/touch.css           Touch controls, compact touch HUD, short-screen menus.
+js/status-effects.js    Shared status effects (stun / shrink / reverse / immunity).
+js/powerups.js          Shared power-ups: types, spawner, per-match Session.
 js/tournament.js        Tournament manager (pure logic, no DOM).
 js/app.js               State machine, modal stack, BACK, pause, the single
                         game loop and run lifecycle.
@@ -172,7 +269,8 @@ To swap in real samples later, register a file for that hook at startup:
 Registered files take priority; anything unregistered falls back to the
 synth. Existing hook names: uiHover, uiClick, uiBack, start, countdown, go,
 tokenPickup, tokenBonus, bombPass, bombTick, bombTickHot, explosion, bonk,
-bonkMiss, penalty, roundWin, matchWin, draw.
+bonkMiss, penalty, roundWin, matchWin, draw, puckHit, puckWall, goal,
+powerSpawn, gara, shrink, reverse.
 
 
 TUNING
@@ -183,8 +281,16 @@ to be playable by people who do not play video games.
 
     bombpass.js   PLAYER_SPEED 180, FUSE_MIN/MAX 10-18, WINS_NEEDED 3
     coinrush.js   PLAYER_SPEED 185, MATCH_SECONDS 60, TOKEN_COUNT 7
-    bonkbooth.js  MATCH_SECONDS 42, TELL/RISE/RETREAT/STUN stage durations
-                  (STUN is how long a bonked rival is held up showing their
-                  hurt art - shorten it and the payoff stops reading)
+    bonkbooth.js  MATCH_SECONDS 42, CURVE (early -> late value of every
+                  stage: gap, tell, rise, active, retreat, stun, bomb
+                  chance), LATE_GRACE_RISE. (stun is how long a bonked rival
+                  is held up showing their hurt art - shorten it and the
+                  payoff stops reading)
+
+    airhockey.js  TARGETS (casual 5 / tournament 3), MOVE_SPEED 290,
+                  DASH_* (cooldown 1.7 s), PUCK_MAX 980, PUCK_DRAG.
+    powerups.js   SHRINK_SCALE 0.58, durations on each type, spawn 15-22 s.
+    status-effects.js  IMMUNITY_MS 2000. neutralMods() is the hook for a future comeback
+                  system (speed, dash cooldown, collider radius) - unused today.
 
 Arena bounds live in js/arena.js as ESA.BOUNDS.

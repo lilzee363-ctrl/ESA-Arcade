@@ -789,7 +789,7 @@
    * ================================================================== */
   function finalSide(id) {
     var c = char(id);
-    return '<img class="fn-art" src="' + esc(c.art.selected) + '" alt="" style="' + esc(ESA.bodyStyle(c)) + '" />' +
+    return '<div class="fn-art-wrap art-box">' + ESA.bodyArtHTML(c, "selected", "fn-art") + "</div>" +
            '<div class="fn-name">' + esc(c.displayName) + "</div>";
   }
 
@@ -829,7 +829,7 @@
       if (!c) return;
       var art = byId("chArt");
       ESA.setArt(art, c, "victory", "body");
-      art.className = "ch-art" + (c.victoryAnimation ? " " + c.victoryAnimation : "");
+      art.className = "art-frame ch-art" + (c.victoryAnimation ? " " + c.victoryAnimation : "");
       byId("chName").textContent = c.displayName;
       byId("championScreen").style.setProperty("--cc", c.color);
 
@@ -922,7 +922,7 @@
         kicker: run.context.tag || "Tournament",
         title: "Paused",
         onEscape: App.resume,
-        items: [
+        items: App.withTouchSetup([
           { label: "Resume", kind: "safe", action: App.resume },
           { label: "Tournament Hub", action: function () {
             Modal.confirm({
@@ -945,7 +945,7 @@
             });
           } },
           { label: "Exit Tournament", kind: "danger", action: leaveTournamentConfirm }
-        ]
+        ])
       };
     }
   };

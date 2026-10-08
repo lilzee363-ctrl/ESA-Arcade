@@ -28,6 +28,7 @@
       short: "P1",
       color: "#4aa3ff",
       move: { up: "KeyW", left: "KeyA", down: "KeyS", right: "KeyD" },
+      action: "Space",            // in-game action (e.g. Air Hockey dash)
       booth: ["KeyA", "KeyS", "KeyD"],
       // Character Select / menus
       select: { up: "KeyW", left: "KeyA", down: "KeyS", right: "KeyD", lock: "Space" },
@@ -35,7 +36,8 @@
       // Per-scheme labels: `text` for compact HUD, `caps` for key caps.
       schemes: {
         arena: { text: "W A S D", caps: ["W", "A", "S", "D"] },
-        booth: { text: "A S D", caps: ["A", "S", "D"] }
+        booth: { text: "A S D", caps: ["A", "S", "D"] },
+        hockey: { text: "W A S D + Space", caps: ["W", "A", "S", "D", "SPC"] }
       }
     },
     p2: {
@@ -43,12 +45,14 @@
       short: "P2",
       color: "#ff6a5c",
       move: { up: "ArrowUp", left: "ArrowLeft", down: "ArrowDown", right: "ArrowRight" },
+      action: "Enter",
       booth: ["KeyJ", "KeyK", "KeyL"],
       select: { up: "ArrowUp", left: "ArrowLeft", down: "ArrowDown", right: "ArrowRight", lock: "Enter" },
       selectLabel: { move: "Arrows", lock: "Enter" },
       schemes: {
         arena: { text: "Arrow Keys", caps: ["←", "↑", "↓", "→"] },
-        booth: { text: "J K L", caps: ["J", "K", "L"] }
+        booth: { text: "J K L", caps: ["J", "K", "L"] },
+        hockey: { text: "Arrows + Enter", caps: ["←", "↑", "↓", "→", "ENT"] }
       }
     }
   };
@@ -77,6 +81,23 @@
     return out;
   }
 
+  /**
+   * Optional PRESENTATION-ONLY tuning for menu art (VS, select panels,
+   * final, champion). Never read by gameplay, colliders or physics.
+   *   ui: { scale: 1, offsetX: 0, offsetY: 0 }
+   * scale multiplies the drawn height; offsets are fractions of that height
+   * (+x right, +y down). Delete the field once a sprite is re-cropped.
+   */
+  function normaliseUi(u) {
+    u = u || {};
+    var num = function (v, d) { v = Number(v); return isFinite(v) ? v : d; };
+    return {
+      scale: ESA.clamp(num(u.scale, 1), 0.6, 1.4),
+      offsetX: ESA.clamp(num(u.offsetX, 0), -0.5, 0.5),
+      offsetY: ESA.clamp(num(u.offsetY, 0), -0.5, 0.5)
+    };
+  }
+
   ESA.Characters = {
     /**
      * Register an ESA member. Required: id, displayName, art.normal, art.hurt.
@@ -100,6 +121,8 @@
      *   available     false hides them from every selection screen
      *   tagline       optional one-liner for select screens
      *   victoryAnimation  optional CSS class applied on the champion screen
+     *   ui            optional menu-art tuning { scale, offsetX, offsetY }
+     *                 (presentation only - see normaliseUi)
      */
     register: function (def) {
       if (!def || !def.id || registry[def.id]) {
@@ -125,7 +148,8 @@
         available: def.available !== false,
         tagline: def.tagline || "",
         victoryAnimation: def.victoryAnimation || null,
-        trim: normaliseTrim(def.trim)
+        trim: normaliseTrim(def.trim),
+        ui: normaliseUi(def.ui)
       };
       // Explicit sprite names for gameplay code.
       c.normalSprite = c.art.normal;
@@ -336,9 +360,14 @@
    *   "head" - a square head-and-shoulders crop for faces and tiles.
    *            The <img> is positioned inside an overflow:hidden square,
    *            which works in every browser.
-   *   "body" - the full visible character, padding removed, via CSS
-   *            object-view-box (Chromium). Other browsers simply show the
-   *            image with its transparent padding.
+   *   "body" - the full visible character in an .art-frame: a box with the
+   *            aspect ratio of the VISIBLE art (trim), sized by CSS to fit
+   *            its slot, with the <img> placed inside so the transparent
+   *            padding falls outside the frame. Works in every browser, so
+   *            every fighter stands at the same height regardless of how
+   *            much padding their PNG has. (Replaces object-view-box, which
+   *            only Chromium supports - Safari showed the padding, making
+   *            tightly-cropped files look far bigger than padded ones.)
    * ------------------------------------------------------------------ */
   function headCrop(c, b) {
     var side = Math.min(b.w, b.h * 0.56);
@@ -365,9 +394,44 @@
            (t.fileH - t.y - t.h) + "px " + t.x + "px);";
   };
 
-  /** Point an existing <img> at a character's art in a given framing. */
+  function artSrc(c, which) {
+    return which === "hurt" ? c.art.hurt : which === "victory" ? c.art.victory
+         : which === "selected" ? c.art.selected : c.art.normal;
+  }
+
+  /** Inline styles for a body frame and its <img> (see "body" above). */
+  ESA.bodyFrame = function (c, which) {
+    var t = c && c.trim && c.trim[which === "hurt" ? "hurt" : "normal"];
+    var ui = (c && c.ui) || { scale: 1, offsetX: 0, offsetY: 0 };
+    var frame = "--ui-s:" + ui.scale + ";--ui-x:" + ui.offsetX + ";--ui-y:" + ui.offsetY + ";";
+    if (!t) return { frame: frame, img: "" };     // untrimmed: CSS contain-fits the whole file
+    var pct = function (v) { return (v * 100).toFixed(3) + "%"; };
+    return {
+      frame: frame + "--ar:" + (t.w / t.h).toFixed(4) + ";",
+      img: "left:" + pct(-t.x / t.w) + ";top:" + pct(-t.y / t.h) + ";" +
+           "width:" + pct(t.fileW / t.w) + ";height:" + pct(t.fileH / t.h) + ";object-fit:fill;"
+    };
+  };
+
+  /** Markup for a body-framed character: <span class="art-frame CLS"><img></span>. */
+  ESA.bodyArtHTML = function (c, which, cls, attrs) {
+    var f = ESA.bodyFrame(c, which);
+    var q = function (s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); };
+    return '<span class="art-frame ' + q(cls || "") + '" style="' + q(f.frame) + '"' + (attrs || "") + '>' +
+           '<img class="art-img" src="' + q(artSrc(c, which)) + '" alt="" draggable="false" style="' + q(f.img) + '" /></span>';
+  };
+
+  /** Point an existing <img> (or .art-frame) at a character's art in a given framing. */
   ESA.setArt = function (img, c, which, framing) {
     if (!img || !c) return;
+    if (framing === "body" && img.classList.contains("art-frame")) {
+      var f = ESA.bodyFrame(c, which);
+      var inner = img.querySelector(".art-img");
+      img.setAttribute("style", f.frame);
+      if (inner.getAttribute("src") !== artSrc(c, which)) inner.setAttribute("src", artSrc(c, which));
+      inner.setAttribute("style", f.img);
+      return;
+    }
     var src = which === "hurt" ? c.art.hurt : which === "victory" ? c.art.victory
             : which === "selected" ? c.art.selected : c.art.normal;
     if (img.getAttribute("src") !== src) img.setAttribute("src", src);
@@ -430,20 +494,16 @@
    * `enabled` is false during the countdown and after a match ends.
    * ------------------------------------------------------------------ */
   ESA.movePlayer = function (p, dt, bounds, enabled) {
-    var c = p.controls;
-    var dx = 0, dy = 0;
-
-    if (enabled) {
-      dx = (ESA.Input.isDown(c.right) ? 1 : 0) - (ESA.Input.isDown(c.left) ? 1 : 0);
-      dy = (ESA.Input.isDown(c.down) ? 1 : 0) - (ESA.Input.isDown(c.up) ? 1 : 0);
-    }
+    // Normalized intent from every source (keyboard: identical to the old
+    // digital WASD / arrows vector; touch: analog joystick, length <= 1).
+    var v = enabled ? ESA.Controls.vector(p.slot) : null;
+    var dx = v ? v.x : 0, dy = v ? v.y : 0;
 
     p.moving = (dx !== 0 || dy !== 0);
 
     if (p.moving) {
-      var len = Math.hypot(dx, dy) || 1;
-      p.x += (dx / len) * p.speed * dt;
-      p.y += (dy / len) * p.speed * dt;
+      p.x += dx * p.speed * dt;
+      p.y += dy * p.speed * dt;
       if (dx < -0.1) p.facing = "left";
       if (dx > 0.1) p.facing = "right";
     }

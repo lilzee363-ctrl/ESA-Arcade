@@ -114,8 +114,11 @@
 .ps-tile.is-on .ps-tile-name { color: var(--cream); }
 .ps-tile.is-on .ps-check { background: var(--gold-400); border-color: #fff1c8; transform: scale(1.1); }
 .ps-tile.is-on .ps-check::after { border-color: #2a1a02; }
-.ps-tile.is-focus .ps-tile-img { transform: translateY(-4px); outline: 3px solid var(--p1); outline-offset: 3px; }
-.ps-tile:hover .ps-tile-img { transform: translateY(-3px); }
+/* Focus / selection never resizes or moves a card (outline is drawn outside layout). */
+.ps-tile.is-focus .ps-tile-img { outline: 3px solid var(--p1); outline-offset: 3px; }
+@media (hover: hover) {
+  .ps-tile:hover .ps-tile-img { transform: translateY(-3px); }
+}
 
 .ps-note {
   align-self: center;

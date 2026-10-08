@@ -538,6 +538,127 @@ body.is-gameplay #crt { display: none; }
 .cs-change { visibility: hidden; min-height: 30px; }
 .cs-side.is-locked .cs-change { visibility: visible; }
 
+/* --- Selected, waiting for Confirm ------------------------------------- */
+.cs-side.is-pending {
+  border-color: var(--gold-300);
+  animation: pendingGlow 1.1s ease-in-out infinite;
+}
+@keyframes pendingGlow {
+  0%, 100% { box-shadow: 0 8px 0 #020810, 0 20px 40px rgba(0, 0, 0, .45), 0 0 10px rgba(243, 195, 90, .25); }
+  50% { box-shadow: 0 8px 0 #020810, 0 20px 40px rgba(0, 0, 0, .45), 0 0 28px rgba(243, 195, 90, .6); }
+}
+.cs-side.is-pending .cs-state { color: var(--gold-300); }
+.cs-side.is-pending .cs-art { scale: 1.07; transform-origin: 50% 100%; }
+.cs-confirm {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 10px;
+  z-index: 3;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 8px 8px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(12, 36, 62, .96), rgba(4, 14, 26, .97));
+  border: 2px solid var(--gold-400);
+  box-shadow: 0 6px 0 #020810, 0 14px 26px rgba(0, 0, 0, .55);
+}
+.cs-side.is-pending .cs-confirm { display: flex; }
+/* The ask line names the fighter, so the panel's own text steps aside. */
+.cs-side.is-pending .cs-name,
+.cs-side.is-pending .cs-tagline,
+.cs-side.is-pending .cs-keys { visibility: hidden; }
+.cs-confirm.is-in { animation: confirmIn .22s var(--ease-back); }
+.cs-confirm.is-nudge { animation: confirmNudge .32s ease-out; }
+@keyframes confirmIn { from { opacity: 0; transform: translateY(10px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes confirmNudge { 0%, 100% { transform: none; } 30% { transform: scale(1.05); } 60% { transform: scale(.98); } }
+.cs-ask {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.15;
+}
+.cs-ask b { color: var(--gold-300); font-size: 16px; }
+.cs-confirm-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; width: 100%; }
+.cs-confirm-row .btn { flex: 1 1 auto; min-width: 0; padding: 0 10px; }
+.cs-confirm-keys { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.cs-confirm-keys .keycap { height: 18px; font-size: 9px; min-width: 0; padding: 0 5px; }
+
+/* Roster tile that is selected but not yet confirmed. */
+.cs-tile.pending-p1 .cs-tile-img, .cs-tile.pending-p2 .cs-tile-img {
+  border-color: var(--gold-300);
+  animation: tilePending 1s ease-in-out infinite;
+}
+@keyframes tilePending {
+  0%, 100% { box-shadow: 0 5px 0 #020810, 0 0 8px rgba(243, 195, 90, .3); }
+  50% { box-shadow: 0 5px 0 #020810, 0 0 22px rgba(243, 195, 90, .75); }
+}
+.cs-tile.pending-p1 .cs-tile-img::after, .cs-tile.pending-p2 .cs-tile-img::after {
+  content: "Selected";
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 5px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: #2a1a02;
+  background: linear-gradient(180deg, #fde7ae, var(--gold-500));
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .5);
+  pointer-events: none;
+}
+
+/* Short "LOCKED IN" flash after Confirm. */
+.cs-lockflash {
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: 38%;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, rgba(4, 14, 26, .92) 18%, rgba(4, 14, 26, .92) 82%, transparent);
+  border-top: 2px solid var(--gold-400);
+  border-bottom: 2px solid var(--gold-400);
+}
+.cs-lf-who { font-family: var(--font-display); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--cream); }
+.cs-lf-word {
+  font-family: var(--font-display);
+  font-size: clamp(18px, 2.2vw, 26px);
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--gold-300);
+  text-shadow: 0 0 14px rgba(243, 195, 90, .7);
+}
+.cs-lockflash.is-on { animation: lockFlash .95s ease-out forwards; }
+@keyframes lockFlash {
+  0% { opacity: 0; transform: scaleX(.3); filter: brightness(2.4); }
+  18% { opacity: 1; transform: scaleX(1.04); filter: brightness(1.6); }
+  30% { transform: none; filter: none; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-side.is-pending, .cs-tile.pending-p1 .cs-tile-img, .cs-tile.pending-p2 .cs-tile-img { animation: none; }
+}
+
 /* --- Roster grid -------------------------------------------------------- */
 .cs-roster-wrap {
   min-height: 0;
@@ -584,7 +705,9 @@ body.is-gameplay #crt { display: none; }
   text-transform: uppercase;
   color: var(--muted);
 }
-.cs-tile:hover .cs-tile-img { transform: translateY(-3px); border-color: rgba(243, 195, 90, .5); }
+@media (hover: hover) {
+  .cs-tile:hover .cs-tile-img { transform: translateY(-3px); border-color: rgba(243, 195, 90, .5); }
+}
 
 .cs-cursor {
   position: absolute;
@@ -604,8 +727,9 @@ body.is-gameplay #crt { display: none; }
 .cs-cursor.p1 { left: -6px; background: var(--p1); }
 .cs-cursor.p2 { right: -6px; background: var(--p2); }
 .cs-tile.has-p1 .cs-cursor.p1, .cs-tile.has-p2 .cs-cursor.p2 { opacity: 1; transform: none; }
-.cs-tile.has-p1 .cs-tile-img { border-color: var(--p1); transform: translateY(-4px) scale(1.04); }
-.cs-tile.has-p2 .cs-tile-img { border-color: var(--p2); transform: translateY(-4px) scale(1.04); }
+/* Selection states only recolour / glow - they never resize or move a card. */
+.cs-tile.has-p1 .cs-tile-img { border-color: var(--p1); }
+.cs-tile.has-p2 .cs-tile-img { border-color: var(--p2); }
 .cs-tile.has-p1.has-p2 .cs-tile-img {
   border-color: transparent;
   background-clip: padding-box;
@@ -923,8 +1047,9 @@ body.is-gameplay #crt { display: none; }
 }
 .cab-panel {
   display: flex;
+  flex-wrap: wrap;            /* 5-key schemes (Air Hockey) drop to two rows */
   justify-content: center;
-  gap: 12px;
+  gap: 6px 12px;
   margin: 10px 12px 0;
   padding: 9px 8px;
   border-radius: 10px;
@@ -1283,14 +1408,17 @@ body.is-gameplay #mascot { display: none !important; }
 
 /* Smooth hover / focus scale-up. */
 .cs-tile-img, .ps-tile-img { transition: transform .18s var(--ease-out), border-color .14s, box-shadow .14s, filter .18s; }
-.cs-tile:hover .cs-tile-img, .cs-tile:focus-visible .cs-tile-img { transform: translateY(-4px) scale(1.05); }
+@media (hover: hover) {
+  .cs-tile:hover .cs-tile-img { transform: translateY(-4px) scale(1.05); }
+}
+.cs-tile:focus-visible .cs-tile-img { box-shadow: 0 5px 0 #020810, 0 0 0 3px rgba(243, 195, 90, .6); }
 
 /* Quick pop when a fighter is locked in. */
 .cs-tile.locked-p1 .cs-tile-img, .cs-tile.locked-p2 .cs-tile-img { animation: tileLock .36s var(--ease-back); }
 @keyframes tileLock {
-  0%   { transform: scale(1); }
-  45%  { transform: scale(1.14); filter: brightness(1.35); }
-  100% { transform: translateY(-4px) scale(1.04); }
+  0%   { filter: brightness(1); }
+  40%  { filter: brightness(1.6); }
+  100% { filter: brightness(1); }
 }
 
 /* Locked faces breathe gently instead of sitting still. */
@@ -1298,8 +1426,65 @@ body.is-gameplay #mascot { display: none !important; }
 .ps-tile.is-on .ps-tile-img img { animation: faceBob 2.8s ease-in-out infinite; }
 @keyframes faceBob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
 
-/* Body art sits on the floor of its box. */
-.cs-art, .vs-art, .fn-art, .ch-art { object-fit: contain; object-position: 50% 100%; }
+/* --------------------------------------------------------------------------
+   Full-body presentation art (P1/P2 panels, VS, Final, Champion).
+   PRESENTATION ONLY - gameplay sprites/colliders never read any of this.
+
+   .art-box    the slot the character stands in (a size container).
+   .art-frame  a box with the aspect ratio of the character's VISIBLE art
+               (--ar, from the trim data), feet on the floor, centred. Its
+               height fits the slot: min(--cap-h, --cap-w / max(--ar, --ar-ref)).
+               --ar-ref is a shared reference width, so a slim fighter and a
+               broad one get the SAME height when width is the limit -
+               fighters never look giant next to tiny.
+   .art-img    the untouched PNG, positioned so its transparent padding
+               falls outside the frame (no CSS crop needed - works in
+               every browser).
+   Optional per-character ui { scale, offsetX, offsetY } feed --ui-s/x/y.
+   -------------------------------------------------------------------------- */
+.art-box { container-type: size; }
+.art-frame.art-frame {
+  --ar: .7;
+  --ar-ref: .8;
+  --cap-h: 100cqh;
+  --cap-w: 100cqw;
+  --fh: calc(min(var(--cap-h), var(--cap-w) / max(var(--ar), var(--ar-ref))) * var(--ui-s, 1));
+  position: relative;
+  display: block;
+  flex: none;
+  width: auto;
+  height: var(--fh);
+  aspect-ratio: var(--ar);
+  max-width: none;
+  max-height: none;
+  left: calc(var(--ui-x, 0) * var(--fh));
+  top: calc(var(--ui-y, 0) * var(--fh));
+}
+.art-frame > .art-img {
+  position: absolute;
+  display: block;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  object-position: 50% 100%;
+  pointer-events: none;
+  user-select: none;
+}
+.cs-art.art-frame { --cap-h: 100cqh; --cap-w: 100cqw; }
+.vs-art.art-frame { --cap-h: min(100cqh, 74vh); --cap-w: 80cqw; }
+.fn-art.art-frame { --cap-h: min(100cqh, 64vh); --cap-w: 90cqw; }
+.ch-art.art-frame { --cap-h: 100cqh; --cap-w: 80cqw; }
+.fn-art-wrap { flex: 1; min-height: 0; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+/* Browsers without container units: a fixed, still-consistent height. */
+@supports not (height: 1cqh) {
+  .art-frame.art-frame { --fh: calc(var(--fallback-h, 34vh) * var(--ui-s, 1)); }
+  .vs-art.art-frame { --fallback-h: 46vh; }
+  .cs-art.art-frame { --fallback-h: 20vh; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .screen.is-active .cs-tile, .screen.is-active .ps-tile { animation: none; }

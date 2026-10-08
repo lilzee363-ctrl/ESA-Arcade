@@ -113,6 +113,7 @@
       }
       Topbar.update(next);
       if (ESA.Attract) ESA.Attract.onScreen(name, next);
+      if (ESA.Touch && ESA.Touch.onScreen) ESA.Touch.onScreen(name);
     },
 
     /** Logical Back for the current screen. */
@@ -129,6 +130,11 @@
 
     /** The single keyboard entry point (wired to ESA.Input.onPress). */
     handleKey: function (code, e) {
+      // The touch Control Setup editor owns the screen while it is open.
+      if (ESA.Touch && ESA.Touch.editorOpen) {
+        if (code === "Escape") { e.preventDefault(); ESA.Touch.closeEditor(); }
+        return;
+      }
       if (ESA.Screens.busy) {
         if (code === "Space" || code === "Enter") e.preventDefault();
         return;
@@ -353,6 +359,7 @@
     // Hit-stop pauses simulation but keeps shake and rendering alive.
     if (!ESA.Stage.isFrozen(now)) Run.game.update(dt, now);
     ESA.Stage.updateFX(dt);
+    if (ESA.Touch) ESA.Touch.sync(Run.game);
 
     var ctx = ESA.Stage.begin();
     Run.game.draw(ctx, now);
@@ -376,6 +383,7 @@
       try { Run.game.destroy(); } catch (e) { console.error("[ESA] destroy failed:", e); }
     }
     Run = null;
+    if (ESA.Touch) ESA.Touch.unmount();     // pointers, overlays, pre-roll, editor
     ESA.UI.clearAll();
     ESA.Stage.resetFX();
     ESA.Input.clear();
@@ -414,6 +422,7 @@
     if (Run.game.timers && Run.game.timers.pause) Run.game.timers.pause();
     stopLoop();
     ESA.Input.clear();
+    if (ESA.Touch) ESA.Touch.releaseAll();
     playEl.classList.add("is-paused");
     ESA.Audio.play("pause");
     Modal.push(Run.context.mode === "tournament" && ESA.TournamentUI
@@ -426,6 +435,7 @@
     Modal.clear();
     Run.paused = false;
     ESA.Input.clear();
+    if (ESA.Touch) ESA.Touch.releaseAll();
     playEl.classList.remove("is-paused");
     if (Run.game.timers && Run.game.timers.resume) Run.game.timers.resume();
     startLoop();
@@ -449,7 +459,7 @@
       kicker: Run.def.title,
       title: "Paused",
       onEscape: resume,
-      items: [
+      items: withTouchSetup([
         { label: "Resume", kind: "safe", action: resume },
         { label: "Restart Match", action: function () {
           Modal.confirm({
@@ -468,9 +478,30 @@
         { label: "Exit to Welcome", kind: "danger", action: function () {
           leaveMatchConfirm(function () { App.go("welcome"); });
         } }
-      ]
+      ])
     };
   }
+
+  /**
+   * On touch devices, adds "Customize Controls" right after Resume. The game
+   * is already paused, so nothing moves while controls are edited; Done
+   * returns to the same pause menu.
+   */
+  function withTouchSetup(items) {
+    if (!Run || !ESA.Touch || !ESA.Touch.active || !ESA.Touch.hasControls(Run.def)) return items;
+    var hidden = false;
+    items.splice(1, 0, { label: "Customize Controls", action: function () {
+      if (!Modal.layer || hidden) return;
+      hidden = true;
+      Modal.layer.classList.add("is-under-editor");
+      ESA.Touch.openEditor(function () {
+        hidden = false;
+        Modal.layer.classList.remove("is-under-editor");
+      });
+    } });
+    return items;
+  }
+  App.withTouchSetup = withTouchSetup;
 
   /* --- The play screen controller --------------------------------- */
   App.register("play", {
@@ -482,7 +513,7 @@
      * params: { def: game registry entry, setup: { p1, p2 },
      *           context: { mode: "casual" } | { mode: "tournament", matchId, tag } }
      */
-    enter: function (p) {
+    enter: function (p, prevName) {
       teardownRun();
       var def = p.def;
       var players = ESA.describeMatchup(p.setup);
@@ -495,15 +526,19 @@
         game: null,
         ended: false,
         paused: false,
-        resultAt: 0
+        resultAt: 0,
+        // Touch players get the rotate + controls briefing when they arrive
+        // from a menu - not on every rematch / restart.
+        preroll: prevName !== "play"
       };
 
+      var view = ESA.Games.resolve(def, Run.context);
       ESA.UI.configure({
         title: def.title,
-        mode: def.mode,
-        centerLabel: def.hud.centerLabel,
-        centerValue: def.hud.centerValue,
-        pips: def.hud.pips,
+        mode: view.mode,
+        centerLabel: view.hud.centerLabel,
+        centerValue: view.hud.centerValue,
+        pips: view.hud.pips,
         players: players,
         scheme: def.controls
       });
@@ -518,15 +553,19 @@
       if (!Run || Run.game) return;
       ESA.Stage.resize();
       var token = Run.token;
-      try {
-        Run.game = Run.def.create({ endMatch: function (r) { onMatchEnd(token, r); } }, Run.setup);
-        Run.game.start();
-      } catch (e) {
-        console.error("[ESA] Game failed to start:", e);
-        Run.game = null;
+      if (ESA.Touch && ESA.Touch.active && Run.preroll) {
+        ESA.Touch.preroll(Run.def, {
+          timers: App.timers,
+          onPlay: function () { if (Run && Run.token === token) beginRun(); },
+          onBack: function () {
+            if (!Run || Run.token !== token) return;
+            ESA.Audio.play("uiBack");
+            App.go(Run.context.mode === "tournament" ? "hub" : "library");
+          }
+        });
         return;
       }
-      startLoop();
+      beginRun();
     },
 
     leave: function () { teardownRun(); },
@@ -555,6 +594,33 @@
     }
   });
 
+  /** Creates the game instance and starts the one loop. */
+  function beginRun() {
+    if (!Run || Run.game) return;
+    var token = Run.token;
+    try {
+      Run.game = Run.def.create({
+        endMatch: function (r) { onMatchEnd(token, r); },
+        context: Run.context
+      }, Run.setup);
+      Run.game.start();
+    } catch (e) {
+      console.error("[ESA] Game failed to start:", e);
+      Run.game = null;
+      return;
+    }
+    if (ESA.Touch) {
+      var g = Run.game;
+      ESA.Touch.mount(Run.def, {
+        layout: "duo",
+        onTap: typeof g.onTap === "function"
+          ? function (x, y, pid) { if (Run && Run.game === g && !Run.paused && !Run.ended) g.onTap(x, y, pid); }
+          : null
+      });
+    }
+    startLoop();
+  }
+
   /** Launches a match through the play screen. */
   App.startMatch = function (def, setup, context) {
     if (!def || !setup) return false;
@@ -575,7 +641,20 @@
     ESA.byId("pauseBtn").addEventListener("click", function () {
       if (Run && !ESA.UI.isResultVisible()) pause();
     });
+    // Touch: the in-game gear opens Control Setup over the paused match;
+    // Done drops back to the pause menu (Resume continues).
+    ESA.byId("ctlBtn").addEventListener("click", function () {
+      if (!Run || !Run.game || ESA.UI.isResultVisible() || !ESA.Touch) return;
+      if (!Run.paused) pause();
+      var item = Modal.top() && (Modal.top().items || []).filter(function (it) { return it.label === "Customize Controls"; })[0];
+      if (item) item.action();
+    });
     ESA.Input.onPress = function (code, e) { App.handleKey(code, e); };
+    // Touch buttons (and a future CPU) reach the game through here.
+    ESA.Controls.onAction = function (slot, action) {
+      if (!Run || !Run.game || Run.paused || Run.ended || ESA.UI.isResultVisible()) return;
+      if (typeof Run.game.onAction === "function") Run.game.onAction(slot, action);
+    };
 
     // A paused game stays paused if the tab is hidden; a running one pauses.
     document.addEventListener("visibilitychange", function () {

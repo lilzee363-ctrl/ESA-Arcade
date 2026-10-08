@@ -473,6 +473,8 @@
     mode: MATCH_SECONDS + " seconds",
     icon: { img: "assets/Branding/Golden Canadian Pharaoh Emblem.png" },
     controls: "arena",
+    touch: { movement: "joystick", actions: [], help: ["JOYSTICK — MOVE", "TOKENS — COLLECT AS MANY AS YOU CAN"],
+             description: "ESA tokens drop across the arena. <b>Use the joystick to run over them.</b> Gold tokens are worth three. Most tokens in sixty seconds wins." },
     hud: { centerLabel: "Time", centerValue: String(MATCH_SECONDS), pips: 0 },
     accent: "#f3c35a",
     canTie: true,

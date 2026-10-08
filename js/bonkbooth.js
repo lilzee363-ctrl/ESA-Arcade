@@ -13,7 +13,7 @@
   var W = ESA.W, H = ESA.H;
 
   var MATCH_SECONDS = 42;
-  var BOMB_CHANCE = 0.14;
+  var BOMB_PENALTY = 2;     // hitting a bomb; a wrong hole / key is -1
   var URGENT_AT = 10;
 
   var HOLE_Y = 392;
@@ -25,16 +25,50 @@
   };
   var SLOTS = ["p1", "p2"];
   var SPRITE_H = 152;
+
+  /*
+   * Hole placement. Every hole is drawn in the ORIGINAL desktop coordinates
+   * (HOLE_X / HOLE_Y) and then mapped to {x, y, s} here, so the desktop
+   * booth is pixel-identical (identity mapping) while touch devices get a
+   * head-to-head layout: each player's three holes form an arc on their own
+   * half, facing the rival across the centre divider, so two pairs of hands
+   * never reach into the same area.
+   */
+  var DESKTOP_LAYOUT = {
+    p1: HOLE_X.p1.map(function (x) { return { x: x, y: HOLE_Y, s: 1 }; }),
+    p2: HOLE_X.p2.map(function (x) { return { x: x, y: HOLE_Y, s: 1 }; })
+  };
+  var TOUCH_S = 0.7;
+  var TOUCH_ARC = [{ x: 148, y: 218 }, { x: 252, y: 341 }, { x: 148, y: 462 }];
+  var TOUCH_LAYOUT = {
+    p1: TOUCH_ARC.map(function (h) { return { x: h.x, y: h.y, s: TOUCH_S }; }),
+    p2: TOUCH_ARC.map(function (h) { return { x: W - h.x, y: h.y, s: TOUCH_S }; })
+  };
+  var TAP_REACH = 125;          // max distance (logical px) from a hole's centre
   var CLIP_TOP = HOLE_Y - 168;
 
-  /* Stage durations, in seconds. `active` and `gap` ease down over the
-     match for a gentle ramp - never into esports territory. */
-  var TELL = 0.40;
-  var RISE = 0.20;
-  var RETREAT = 0.22;
-  /* How long a bonked target stays up showing its hurt art. Without this the
-     hurt pose flashes by in a couple of frames and the payoff is invisible. */
-  var STUN = 0.46;
+  /*
+   * Difficulty curve. Every stage duration eases from its EARLY value to its
+   * LATE value over the match (smoothstep on match progress), so the start is
+   * comfortable, the middle tightens and the last ~10 s are the sharpest -
+   * the late window is still ~0.9 s from the first glow, so always humanly
+   * hittable. Values are seconds; [min, max] pairs are randomised per target.
+   */
+  var CURVE = {
+    gap:        { early: [0.55, 0.75], late: [0.18, 0.28] },   // empty booth between pop-ups
+    tell:       { early: 0.40, late: 0.24 },                   // hole glows (wind-up)
+    rise:       { early: 0.20, late: 0.13 },
+    active:     { early: [1.05, 1.30], late: [0.52, 0.62] },   // up and hittable
+    bombActive: { early: [1.10, 1.35], late: [0.75, 0.90] },   // bombs linger: correct play is nothing
+    retreat:    { early: 0.22, late: 0.16 },
+    /* How long a bonked target stays up showing its hurt art. Without this
+       the hurt pose flashes by in a couple of frames and the payoff is invisible. */
+    stun:       { early: 0.46, late: 0.34 },
+    bombChance: { early: 0.12, late: 0.20 }
+  };
+  /* A correct key while the target is sinking still counts while it is
+     at least this far up (it is visibly there) - avoids frame-perfect misses. */
+  var LATE_GRACE_RISE = 0.5;
 
   function BonkBooth(api, setup) {
     this.api = api;
@@ -44,8 +78,11 @@
     var who = ESA.describeMatchup(setup);
     this.players = { p1: who.p1, p2: who.p2 };
     // The booth backdrop bakes in names and colours, so cache it per matchup.
+    // Touch devices get the head-to-head layout (chosen once per match).
+    this.touchLayout = !!(ESA.Touch && ESA.Touch.active);
+    this.layout = this.touchLayout ? TOUCH_LAYOUT : DESKTOP_LAYOUT;
     this.layerKey = "arena-bonk:" + who.p1.name + "|" + who.p1.color + "|" +
-                    who.p2.name + "|" + who.p2.color;
+                    who.p2.name + "|" + who.p2.color + (this.touchLayout ? "|touch" : "");
 
     this.score = { p1: 0, p2: 0 };
     this.timeLeft = MATCH_SECONDS;
@@ -55,6 +92,7 @@
     this.targets = { p1: null, p2: null };
     this.swing = { p1: null, p2: null };   // mallet feedback
     this.holeGlow = { p1: [0, 0, 0], p2: [0, 0, 0] };
+    this.holeMiss = { p1: [0, 0, 0], p2: [0, 0, 0] };   // red "wrong hole" flash
   }
 
   /** Whose face appears in a given player's holes: their opponent's slot. */
@@ -86,6 +124,8 @@
     this.swing.p2 = null;
     this.holeGlow.p1 = [0, 0, 0];
     this.holeGlow.p2 = [0, 0, 0];
+    this.holeMiss.p1 = [0, 0, 0];
+    this.holeMiss.p2 = [0, 0, 0];
 
     this.targets.p1 = this.makeTarget("p1", 0.5);
     this.targets.p2 = this.makeTarget("p2", 0.8);
@@ -113,19 +153,38 @@
    * Targets
    * ------------------------------------------------------------------ */
 
-  /** 0 at the start of the match, 1 at the end. Drives the gentle ramp. */
+  /** 0 at the start of the match, 1 at the end. */
   BonkBooth.prototype.progress = function () {
     return ESA.clamp(1 - this.timeLeft / MATCH_SECONDS, 0, 1);
   };
 
+  /** Difficulty 0..1: smoothstep of progress - gentle start, steady middle ramp. */
+  BonkBooth.prototype.difficulty = function () {
+    var p = this.progress();
+    return p * p * (3 - 2 * p);
+  };
+
+  /** A curve value at difficulty k (random within [min, max] pairs). */
+  function curve(name, k) {
+    var c = CURVE[name];
+    var a = Array.isArray(c.early) ? ESA.rand(c.early[0], c.early[1]) : c.early;
+    var b = Array.isArray(c.late) ? ESA.rand(c.late[0], c.late[1]) : c.late;
+    return ESA.lerp(a, b, k);
+  }
+
+  /**
+   * One target EVENT per player: gap -> tell -> rise -> active -> retreat.
+   * Each event accepts exactly one meaningful attempt from its owner
+   * (`attempted`); once used, further presses in the same event are ignored.
+   */
   BonkBooth.prototype.makeTarget = function (side, gapOverride) {
-    var prog = this.progress();
+    var k = this.difficulty();
     var prev = this.targets[side];
     var hole = ESA.randInt(0, 2);
     // Avoid the same hole twice in a row so the booth stays lively.
     if (prev && prev.hole === hole) hole = (hole + 1 + ESA.randInt(0, 1)) % 3;
 
-    var isBomb = ESA.chance(BOMB_CHANCE);
+    var isBomb = ESA.chance(curve("bombChance", k));
 
     return {
       side: side,
@@ -133,14 +192,16 @@
       type: isBomb ? "bomb" : "normal",
       phase: "gap",
       t: 0,
-      // Bombs linger a touch longer: the correct play is to do nothing.
-      activeFor: isBomb
-        ? ESA.rand(1.15, 1.45)
-        : ESA.lerp(ESA.rand(1.1, 1.4), ESA.rand(0.9, 1.1), prog),
-      gapFor: gapOverride !== undefined ? gapOverride
-            : ESA.lerp(ESA.rand(0.45, 0.7), ESA.rand(0.3, 0.45), prog),
+      gapFor: gapOverride !== undefined ? gapOverride : curve("gap", k),
+      tellFor: curve("tell", k),
+      riseFor: curve("rise", k),
+      activeFor: curve(isBomb ? "bombActive" : "active", k),
+      retreatFor: curve("retreat", k),
+      stunFor: curve("stun", k),
       rise: 0,
-      resolved: false,
+      resolved: false,      // scored or bomb hit: hold up, then drop
+      attempted: false,     // this player's one attempt for this event is used
+      gapMissed: false,     // one "nothing there" penalty per empty gap, max
       hitType: null,
       reactT: 0
     };
@@ -160,13 +221,13 @@
 
       case "tell":
         // Hole glows and a shadow swells: the readable wind-up.
-        this.holeGlow[side][t.hole] = Math.max(this.holeGlow[side][t.hole], t.t / TELL);
-        if (t.t >= TELL) { t.phase = "rise"; t.t = 0; }
+        this.holeGlow[side][t.hole] = Math.max(this.holeGlow[side][t.hole], t.t / t.tellFor);
+        if (t.t >= t.tellFor) { t.phase = "rise"; t.t = 0; }
         break;
 
       case "rise":
-        t.rise = ESA.easeOut(ESA.clamp(t.t / RISE, 0, 1));
-        if (t.t >= RISE) { t.phase = "active"; t.t = 0; t.rise = 1; }
+        t.rise = ESA.easeOut(ESA.clamp(t.t / t.riseFor, 0, 1));
+        if (t.t >= t.riseFor) { t.phase = "active"; t.t = 0; t.rise = 1; }
         break;
 
       case "active":
@@ -177,11 +238,11 @@
       case "stunned":
         // Held up after a successful hit so the hurt art actually reads.
         t.rise = 1;
-        if (t.t >= STUN) { t.phase = "retreat"; t.t = 0; }
+        if (t.t >= t.stunFor) { t.phase = "retreat"; t.t = 0; }
         break;
 
       case "retreat":
-        var dur = t.resolved ? RETREAT * 0.6 : RETREAT;
+        var dur = t.resolved ? t.retreatFor * 0.6 : t.retreatFor;
         t.rise = 1 - ESA.easeIn(ESA.clamp(t.t / dur, 0, 1));
         if (t.t >= dur) this.targets[side] = this.makeTarget(side);
         break;
@@ -201,23 +262,85 @@
     }
   };
 
+  /**
+   * Touch: a tap only ever counts for the side of the divider it landed on,
+   * and only for the nearest of that side's holes. One call per finger
+   * (pointerdown), so a tap can never count twice.
+   */
+  BonkBooth.prototype.onTap = function (x, y) {
+    if (this.state !== "playing") return;
+    var side = x < W / 2 ? "p1" : "p2";
+    var best = -1, bestD = TAP_REACH;
+    for (var h = 0; h < 3; h++) {
+      var L = this.layout[side][h];
+      // Aim point sits above the hole, where the rival's head pops up.
+      var d = Math.hypot(x - L.x, y - (L.y - 46 * L.s));
+      if (d < bestD) { bestD = d; best = h; }
+    }
+    if (best >= 0) this.attempt(side, best);
+  };
+
+  /** A point relative to a hole (desktop offsets), in screen coordinates. */
+  BonkBooth.prototype.holePt = function (side, h, dy) {
+    var L = this.layout[side][h];
+    return { x: L.x, y: L.y + dy * L.s };
+  };
+
+  /**
+   * Resolve one press / tap for `side` on `holeIndex`.
+   *
+   *   correct hole while the rival is up            +1  (uses the attempt)
+   *   bomb hole while the bomb is up                -2  (uses the attempt)
+   *   wrong hole, or a late press as it sinks       -1  (uses the attempt)
+   *   any press while the booth is empty (gap)      -1  (once per gap)
+   *   correct hole during the glow, before it rises  0  "EARLY" - not an attempt
+   *   anything after the attempt is used             ignored, no penalty
+   *
+   * Because the FIRST press of an event decides it, mashing all three keys
+   * (or tapping all three holes) can't farm the right one: two of three
+   * orders lose a point and lock the event before the correct key lands.
+   * The lock is per player and per event, so it never blocks the next
+   * target or the other player.
+   */
   BonkBooth.prototype.attempt = function (side, holeIndex) {
+    if (this.state !== "playing") return;
     var t = this.targets[side];
-    var cx = HOLE_X[side][holeIndex];
+    if (!t || t.attempted || t.resolved) return;
 
-    // Mallet comes down regardless - the swing always reads.
-    this.swing[side] = { hole: holeIndex, t: 0.24 };
+    var self = this;
+    var at = function (dy) { return self.holePt(side, holeIndex, dy); };
+    var cx = at(0).x;
 
-    var hittable = t && !t.resolved && t.hole === holeIndex &&
-                   (t.phase === "rise" || t.phase === "active");
+    if (t.phase === "gap") {
+      if (t.gapMissed) return;
+      t.gapMissed = true;
+      this.swing[side] = { hole: holeIndex, t: 0.24 };
+      this.penalise(side, holeIndex, "MISS");
+      return;
+    }
 
-    if (!hittable) {
-      ESA.Audio.play("bonkMiss");
+    if (t.phase === "tell" && holeIndex === t.hole) {
+      // Reading the glow is fine - just not yet. No penalty, no lock.
+      this.swing[side] = { hole: holeIndex, t: 0.24 };
       this.fx.spawn({
-        type: "text", x: cx, y: HOLE_Y - 44, vx: 0, vy: -40,
-        gravity: 0, drag: 0.98, life: 0.5, font: 19,
-        text: "MISS", color: "#9db2c7"
+        type: "text", x: cx, y: at(-44).y, vx: 0, vy: -40,
+        gravity: 0, drag: 0.98, life: 0.4, font: 17,
+        text: "EARLY", color: "#9db2c7"
       });
+      return;
+    }
+
+    // Mallet comes down - the swing always reads.
+    this.swing[side] = { hole: holeIndex, t: 0.24 };
+    t.attempted = true;
+
+    var up = t.phase === "rise" || t.phase === "active" ||
+             (t.phase === "retreat" && t.rise >= LATE_GRACE_RISE);
+
+    if (!up || t.hole !== holeIndex) {
+      var late = t.phase === "retreat" && t.hole === holeIndex;
+      this.penalise(side, holeIndex, late ? "LATE"
+        : (this.touchLayout ? "WRONG HOLE" : "WRONG KEY"));
       return;
     }
 
@@ -227,23 +350,30 @@
     t.t = 0;
 
     if (t.type === "bomb") {
+      // The worst mistake in the booth: -2, with a heavier hit than a wrong hole.
       t.hitType = "bomb";
-      this.score[side] = Math.max(0, this.score[side] - 1);
+      this.score[side] -= BOMB_PENALTY;
       ESA.UI.setScore(side, this.score[side]);
       ESA.Audio.play("penalty");
-      ESA.Stage.shake(12);
-      ESA.Stage.flash(0.3, "#ffb3ae");
+      ESA.Stage.shake(16);
+      ESA.Stage.flash(0.42, "#ff8f86");
+      this.holeMiss[side][holeIndex] = 1.8;   // red rim lingers longer than a -1
 
-      this.fx.burst(cx, HOLE_Y - 58, 22, {
+      this.fx.burst(cx, at(-58).y, 22, {
         colors: ["#e8584f", "#ff9a3c", "#ffd766", "#fff6e4"],
         speedMin: 90, speedMax: 320, lifeMin: 0.35, lifeMax: 0.75,
         sizeMin: 3, sizeMax: 6.5, gravity: 380
       });
-      this.fx.spawn({ type: "ring", x: cx, y: HOLE_Y - 58, size: 12, size2: 120, life: 0.45, color: "#e8584f" });
+      this.fx.spawn({ type: "ring", x: cx, y: at(-58).y, size: 12, size2: 120, life: 0.45, color: "#e8584f" });
       this.fx.spawn({
-        type: "text", x: cx, y: HOLE_Y - 92, vx: 0, vy: -58,
-        gravity: 0, drag: 0.99, life: 0.8, font: 30,
-        text: "−1", color: "#e8584f"
+        type: "text", x: cx, y: at(-96).y, vx: 0, vy: -58,
+        gravity: 0, drag: 0.99, life: 0.9, font: 40,
+        text: "−" + BOMB_PENALTY, color: "#ff3b30"
+      });
+      this.fx.spawn({
+        type: "text", x: cx, y: at(-52).y, vx: 0, vy: -34,
+        gravity: 0, drag: 0.98, life: 0.7, font: 16,
+        text: "BOMB!", color: "#ffd0cc"
       });
 
     } else {
@@ -253,25 +383,49 @@
       ESA.Audio.play("bonk");
       ESA.Stage.shake(7);
 
-      this.fx.burst(cx, HOLE_Y - 92, 10, {
+      this.fx.burst(cx, at(-92).y, 10, {
         colors: ["#fdeec4", "#f3c35a"],
         speedMin: 60, speedMax: 170, lifeMin: 0.25, lifeMax: 0.5,
         sizeMin: 2, sizeMax: 4, gravity: 300
       });
       for (var s = 0; s < 3; s++) {
         this.fx.spawn({
-          type: "star", x: cx + ESA.rand(-26, 26), y: HOLE_Y - 112 + ESA.rand(-14, 14),
+          type: "star", x: cx + ESA.rand(-26, 26), y: at(-112).y + ESA.rand(-14, 14),
           vx: ESA.rand(-90, 90), vy: ESA.rand(-170, -90),
           life: ESA.rand(0.5, 0.85), size: ESA.rand(7, 11),
           color: "#ffd766", gravity: 260
         });
       }
       this.fx.spawn({
-        type: "text", x: cx, y: HOLE_Y - 126, vx: 0, vy: -56,
-        gravity: 0, drag: 0.99, life: 0.72, font: 28,
-        text: "+1", color: "#fdeec4"
+        type: "text", x: cx, y: at(-126).y, vx: 0, vy: -56,
+        gravity: 0, drag: 0.99, life: 0.72, font: 30,
+        text: "+1", color: "#ffd766"
       });
     }
+  };
+
+  /** Wrong hole / key, late, or swinging at an empty booth: -1 and a red pop. */
+  BonkBooth.prototype.penalise = function (side, holeIndex, label) {
+    var self = this;
+    var at = function (dy) { return self.holePt(side, holeIndex, dy); };
+    var cx = at(0).x;
+
+    this.score[side] -= 1;
+    ESA.UI.setScore(side, this.score[side]);
+    ESA.Audio.play("bonkMiss");
+    this.holeMiss[side][holeIndex] = 1;
+
+    this.fx.spawn({ type: "ring", x: cx, y: at(-30).y, size: 10, size2: 70, life: 0.3, color: "#e8584f" });
+    this.fx.spawn({
+      type: "text", x: cx, y: at(-70).y, vx: 0, vy: -50,
+      gravity: 0, drag: 0.99, life: 0.62, font: 28,
+      text: "−1", color: "#ff5a4f"
+    });
+    this.fx.spawn({
+      type: "text", x: cx, y: at(-38).y, vx: 0, vy: -30,
+      gravity: 0, drag: 0.98, life: 0.55, font: 14,
+      text: label, color: "#ffb3ae"
+    });
   };
 
   /* ------------------------------------------------------------------ *
@@ -288,6 +442,7 @@
       }
       for (var h = 0; h < 3; h++) {
         this.holeGlow[side][h] = Math.max(0, this.holeGlow[side][h] - dt * 2.6);
+        this.holeMiss[side][h] = Math.max(0, this.holeMiss[side][h] - dt * 3.2);
       }
     }
 
@@ -323,8 +478,10 @@
         winner: winner,
         kicker: "Booth Closed",
         title: this.players[winner].name + " Wins",
-        text: "Landed " + Math.max(z, s) + " clean bonks on " +
-              this.players[victimOf(winner)].name + ".",
+        text: Math.max(z, s) > 0
+          ? "Finished on " + Math.max(z, s) + (Math.max(z, s) === 1 ? " point" : " points") + " against " +
+            this.players[victimOf(winner)].name + ". Accuracy pays."
+          : "Fewer wrong hits than " + this.players[victimOf(winner)].name + ". Accuracy pays.",
         scores: { p1: z, p2: s }
       });
     } else {
@@ -357,7 +514,7 @@
    * ================================================================== */
 
   /** Everything that never moves, rendered once. */
-  function drawBoothLayer(g, players) {
+  function drawBoothLayer(g, players, layout, touch) {
     /* --- Back wall --------------------------------------------------- */
     var wall = g.createLinearGradient(0, 0, 0, H);
     wall.addColorStop(0, "#0d2a49");
@@ -385,6 +542,17 @@
     // Booth spotlights: a soft pool of light above each hole, so the back
     // wall reads as a lit attraction rather than an empty panel.
     SLOTS.forEach(function (side) {
+      if (touch) {
+        // Head-to-head: a soft pool of light behind each hole instead.
+        layout[side].forEach(function (L) {
+          var pool = g.createRadialGradient(L.x, L.y - 50, 4, L.x, L.y - 50, 92);
+          pool.addColorStop(0, "rgba(243,195,90,.16)");
+          pool.addColorStop(1, "rgba(243,195,90,0)");
+          g.fillStyle = pool;
+          g.fillRect(L.x - 100, L.y - 150, 200, 200);
+        });
+        return;
+      }
       HOLE_X[side].forEach(function (hx) {
         var cone = g.createLinearGradient(0, 132, 0, HOLE_Y - 6);
         cone.addColorStop(0, "rgba(243,195,90,.13)");
@@ -470,7 +638,8 @@
     /* --- Side name plates --------------------------------------------- */
     SLOTS.forEach(function (side) {
       var c = players[side];
-      var px = side === "p1" ? W * 0.25 : W * 0.75;
+      var px = touch ? (side === "p1" ? W / 2 - 150 : W / 2 + 150)
+                     : (side === "p1" ? W * 0.25 : W * 0.75);
       g.save();
       g.fillStyle = "rgba(4,14,26,.6)";
       ESA.roundRect(g, px - 96, 100, 192, 28, 14);
@@ -487,6 +656,27 @@
       g.fillText(c.name.toUpperCase() + "'S SIDE", px, 115);
       g.restore();
     });
+
+    /* --- Head-to-head VS badge (touch layout) ------------------------ */
+    if (touch) {
+      g.save();
+      g.fillStyle = "rgba(4,14,26,.9)";
+      g.beginPath(); g.arc(W / 2, H / 2 + 20, 30, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "#f3c35a";
+      g.lineWidth = 2.5;
+      g.stroke();
+      g.fillStyle = "#f3c35a";
+      g.font = "800 22px " + ESA.FONT_DISPLAY;
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText("VS", W / 2, H / 2 + 21);
+      // Tap-zone tint per side.
+      [[players.p1.color, 0], [players.p2.color, W / 2]].forEach(function (c) {
+        g.fillStyle = "rgba(" + rgbOf(c[0]) + ",.05)";
+        g.fillRect(c[1], 136, W / 2, H - 188);
+      });
+      g.restore();
+    }
 
     /* --- Counter ------------------------------------------------------ */
     var counterY = H - 52;
@@ -518,7 +708,7 @@
   }
 
   /** The hole itself: rim, dark interior, inner shadow. */
-  function drawHoleBack(g, cx, glow) {
+  function drawHoleBack(g, cx, glow, miss) {
     // Rim shadow on the booth floor
     g.save();
     g.globalAlpha = 0.5;
@@ -546,6 +736,23 @@
     g.beginPath();
     g.ellipse(cx, HOLE_Y, HOLE_RX, HOLE_RY, 0, 0, Math.PI * 2);
     g.fill();
+
+    // Red flash after a wrong hit on this hole
+    if (miss > 0.02) {
+      g.save();
+      g.globalAlpha = Math.min(1, miss);
+      g.strokeStyle = "#ff5a4f";
+      g.lineWidth = 5;
+      g.beginPath();
+      g.ellipse(cx, HOLE_Y, HOLE_RX + 7, HOLE_RY + 6, 0, 0, Math.PI * 2);
+      g.stroke();
+      g.globalAlpha = Math.min(1, miss) * 0.35;
+      g.fillStyle = "#e8584f";
+      g.beginPath();
+      g.ellipse(cx, HOLE_Y, HOLE_RX, HOLE_RY, 0, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
 
     // Anticipation glow spilling out of the hole
     if (glow > 0.02) {
@@ -603,6 +810,22 @@
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillText(label, cx, y + 18);
+    g.restore();
+  }
+
+  /** Touch layout: the tappable pad under each hole, in its owner's colour. */
+  function drawTapPad(g, cx, color, hit) {
+    g.save();
+    g.globalAlpha = hit ? 0.55 : 0.22;
+    g.fillStyle = color;
+    g.beginPath();
+    g.ellipse(cx, HOLE_Y - 40, HOLE_RX + 46, 118, 0, 0, Math.PI * 2);
+    g.fill();
+    g.globalAlpha = hit ? 1 : 0.6;
+    g.strokeStyle = color;
+    g.lineWidth = 3;
+    g.setLineDash([10, 8]);
+    g.stroke();
     g.restore();
   }
 
@@ -693,7 +916,8 @@
    * ------------------------------------------------------------------ */
   BonkBooth.prototype.draw = function (ctx, now) {
     var players = this.players;
-    var layer = ESA.Stage.layer(this.layerKey, function (g) { drawBoothLayer(g, players); });
+    var layout = this.layout, touch = this.touchLayout;
+    var layer = ESA.Stage.layer(this.layerKey, function (g) { drawBoothLayer(g, players, layout, touch); });
     ESA.Stage.blit(ctx, layer);
 
     // Marquee bulbs - the only animated part of the booth chrome.
@@ -720,7 +944,15 @@
       for (var h = 0; h < 3; h++) {
         var cx = HOLE_X[side][h];
         var glow = this.holeGlow[side][h];
-        drawHoleBack(ctx, cx, glow);
+        var L = this.layout[side][h];
+        // Map the desktop-space hole art onto this layout slot.
+        ctx.save();
+        ctx.translate(L.x, L.y);
+        ctx.scale(L.s, L.s);
+        ctx.translate(-cx, -HOLE_Y);
+
+        if (this.touchLayout) drawTapPad(ctx, cx, color, this.swing[side] && this.swing[side].hole === h);
+        drawHoleBack(ctx, cx, glow, this.holeMiss[side][h]);
 
         if (t && t.hole === h && t.rise > 0.001) {
           this.drawOccupant(ctx, side, t, cx, now);
@@ -728,12 +960,22 @@
 
         drawHoleLip(ctx, cx);
 
-        var pressed = ESA.Input.isDown(ESA.CONTROLS[side].booth[h]);
-        drawKeycap(ctx, cx, labels[h], color, pressed);
+        if (!this.touchLayout) {
+          var pressed = ESA.Input.isDown(ESA.CONTROLS[side].booth[h]);
+          drawKeycap(ctx, cx, labels[h], color, pressed);
+        }
+        ctx.restore();
       }
 
+      // Mallet last, over all three holes (as on desktop before).
       if (this.swing[side]) {
-        drawMallet(ctx, HOLE_X[side][this.swing[side].hole], this.swing[side].t);
+        var sh = this.swing[side].hole, SL = this.layout[side][sh];
+        ctx.save();
+        ctx.translate(SL.x, SL.y);
+        ctx.scale(SL.s, SL.s);
+        ctx.translate(-HOLE_X[side][sh], -HOLE_Y);
+        drawMallet(ctx, HOLE_X[side][sh], this.swing[side].t);
+        ctx.restore();
       }
     }
 
@@ -749,6 +991,8 @@
     ctx.beginPath();
     ctx.rect(cx - HOLE_RX - 6, CLIP_TOP, (HOLE_RX + 6) * 2, (HOLE_Y + 4) - CLIP_TOP);
     ctx.clip();
+    // Attempt already used on this pop-up: show it greyed out - it can't score now.
+    if (t.attempted && !t.resolved) ctx.globalAlpha = 0.4;
 
     if (t.type === "bomb") {
       drawBoothBomb(ctx, cx, feetY - 46, now);
@@ -793,12 +1037,19 @@
   ESA.Games.register({
     id: "bonk",
     title: "Bonk Booth",
-    tagline: "Your rival pops out of three holes. Hit the matching key. Skip the bombs.",
+    tagline: "Your rival pops out of three holes. Hit the matching key. Wrong key costs a point.",
     description: "Your rival pops out of your three holes. <b>Hit the key under the hole</b> " +
-                 "before they drop back down. If a bomb appears, leave it alone — bonking it costs you a point.",
+                 "before they drop back down: <b>+1</b>. Wrong key: <b>−1</b> — one swing per pop-up, so mashing loses. " +
+                 "Leave bombs alone — hitting one is <b>−2</b>. It gets faster as the clock runs down.",
     mode: MATCH_SECONDS + " seconds",
     icon: { symbol: "#icoMallet" },
     controls: "booth",
+    touch: { movement: "none", actions: [], interaction: "directTap",
+             help: ["TAP YOUR RIVAL — +1", "WRONG HOLE — −1 · ONE TAP PER POP-UP", "BOMB — LEAVE IT ALONE (−2)"],
+             tagline: "Your rival pops out of your three holes. Tap the right one. Wrong hole costs a point.",
+             description: "Your rival pops out of the three holes on <b>your side of the screen</b>. " +
+                          "<b>Tap them</b> before they drop back down: <b>+1</b>. Wrong hole: <b>−1</b> — one tap per pop-up, so spamming loses. " +
+                          "Leave bombs alone — hitting one is <b>−2</b>. It gets faster as the clock runs down." },
     hud: { centerLabel: "Time", centerValue: String(MATCH_SECONDS), pips: 0 },
     accent: "#4fb7c9",
     canTie: true,

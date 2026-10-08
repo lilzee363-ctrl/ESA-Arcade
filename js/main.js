@@ -100,6 +100,7 @@
     ESA.Menus.init();
     ESA.TournamentScreens.init();
     ESA.Attract.init();
+    ESA.Touch.init();
 
     buildDust(ESA.byId("ambDust"), 14);
     buildBulbs(ESA.byId("bezelBulbs"), 28);

@@ -445,6 +445,8 @@
     mode: "First to " + WINS_NEEDED + " rounds",
     icon: { symbol: "#icoBomb" },
     controls: "arena",
+    touch: { movement: "joystick", actions: [], help: ["JOYSTICK — MOVE", "GET CLOSE — TAG THE BOMB ONTO YOUR RIVAL"],
+             description: "One of you is holding a live bomb. <b>Steer into your opponent to pass it</b> — no button needed. The fuse is hidden, so nobody knows when it blows." },
     hud: { centerLabel: "Round", centerValue: "1", pips: WINS_NEEDED },
     accent: "#e8584f",
     canTie: false,
