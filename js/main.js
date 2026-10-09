@@ -99,6 +99,7 @@
     ESA.App.init();
     ESA.Menus.init();
     ESA.TournamentScreens.init();
+    if (ESA.SoloMenus) ESA.SoloMenus.init();
     ESA.Attract.init();
     ESA.Touch.init();
 

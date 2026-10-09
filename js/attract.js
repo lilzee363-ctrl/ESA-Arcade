@@ -12,12 +12,25 @@
      for prefers-reduced-motion.
    - The emblem PNG itself is never modified. Legs and arms are separate
      elements positioned around it.
+
+   V4 AMBIENCE (css/arcade.css, #ambient)
+   - Always, very subtle: a faint ESA emblem breathing in the background
+     and a few slowly twinkling stars.
+   - After IDLE_MS without input (attract mode) the field gets a little
+     richer, and every MOMENT_GAP seconds ONE short "moment" plays - a
+     corner glint, a soft scanline pass or a gold emblem pulse - in turn,
+     never all at once. Any input calms it straight back down.
+   - Everything is transform / opacity only, a dozen elements, no per-frame
+     JS; gameplay hides it all, reduced motion keeps it static.
    ========================================================================== */
 
 (function (ESA) {
   "use strict";
 
-  var IDLE_MS = 6500;          // quiet time before attract mode starts
+  var IDLE_MS = 9000;          // quiet time before attract mode starts
+  var MOMENTS = ["glint", "pulse", "scan"];
+  var MOMENT_GAP = [9000, 14000];
+  var MOMENT_MS = 2600;
   var FIRST_SKIT_MS = 9500;    // first mascot appearance
   var SKIT_GAP = [17000, 26000];
 
@@ -41,6 +54,9 @@
     timers: new ESA.TimerGroup(),
     checkId: 0,
     reduced: false,
+    momentAt: 0,
+    momentIdx: 0,
+    momentOff: 0,
 
     init: function () {
       var self = this;
@@ -62,7 +78,7 @@
       }, { passive: true });
 
       document.addEventListener("visibilitychange", function () {
-        if (document.hidden) { self.stopChecks(); self.endSkit(true); }
+        if (document.hidden) { self.stopChecks(); self.endSkit(true); self.endMoment(); }
         else if (self.enabled) { self.poke(); self.startChecks(); }
       });
     },
@@ -82,6 +98,24 @@
       this.stopChecks();
       this.endSkit(true);
       this.body.classList.remove("is-attract");
+      this.endMoment();
+    },
+
+    /* --- Ambient moments (one at a time, rare, attract mode only) --- */
+    playMoment: function () {
+      var name = MOMENTS[this.momentIdx++ % MOMENTS.length];
+      var self = this;
+      this.endMoment();
+      this.body.classList.add("amb-m-" + name);
+      this.momentOff = setTimeout(function () { self.endMoment(); }, MOMENT_MS);
+      this.momentAt = performance.now() + MOMENT_GAP[0] + Math.random() * (MOMENT_GAP[1] - MOMENT_GAP[0]);
+    },
+
+    endMoment: function () {
+      clearTimeout(this.momentOff);
+      this.momentOff = 0;
+      if (!this.body) return;
+      for (var i = 0; i < MOMENTS.length; i++) this.body.classList.remove("amb-m-" + MOMENTS[i]);
     },
 
     startChecks: function () {
@@ -101,12 +135,17 @@
       this.nextSkitAt = now + FIRST_SKIT_MS;
       if (this.body && this.body.classList.contains("is-attract")) this.body.classList.remove("is-attract");
       if (this.skit) this.endSkit(false);
+      this.momentAt = now + IDLE_MS + 2500;   // first moment shortly after attract starts
+      if (this.momentOff) this.endMoment();   // input calms everything straight down
     },
 
     tick: function () {
       if (!this.enabled || document.hidden) return;
       var now = performance.now();
-      if (now - this.lastInput > IDLE_MS) this.body.classList.add("is-attract");
+      if (now - this.lastInput > IDLE_MS) {
+        this.body.classList.add("is-attract");
+        if (!this.reduced && now >= this.momentAt && !ESA.Screens.busy) this.playMoment();
+      }
       if (!this.skit && !this.reduced && now >= this.nextSkitAt &&
           !ESA.Screens.busy && !ESA.Modal.active()) {
         this.runSkit();

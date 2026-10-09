@@ -5,6 +5,12 @@
 
    Every target runs a readable four-stage cycle so non-gamers get real
    reaction time:   tell -> rise -> active -> retreat
+
+   SOLO SCORE ATTACK (context.single): one booth of three holes in the
+   middle of the screen, no rival board. Random ESA members pop up, the
+   run is a little longer (SOLO_SECONDS) and keeps the same early ->
+   middle -> late curve. Same scoring: +1 / -1 / bomb -2 / nothing = 0,
+   one attempt per pop-up. Reports result.score; there is no winner.
    ========================================================================== */
 
 (function (ESA) {
@@ -13,6 +19,7 @@
   var W = ESA.W, H = ESA.H;
 
   var MATCH_SECONDS = 42;
+  var SOLO_SECONDS = 50;
   var BOMB_PENALTY = 2;     // hitting a bomb; a wrong hole / key is -1
   var URGENT_AT = 10;
 
@@ -44,8 +51,14 @@
     p1: TOUCH_ARC.map(function (h) { return { x: h.x, y: h.y, s: TOUCH_S }; }),
     p2: TOUCH_ARC.map(function (h) { return { x: W - h.x, y: h.y, s: TOUCH_S }; })
   };
+  // Solo: one centred booth. Touch holes are a touch bigger (thumbs).
+  var SOLO_DESKTOP = { p1: [{ x: W / 2 - 180, y: HOLE_Y, s: 1 }, { x: W / 2, y: HOLE_Y, s: 1 }, { x: W / 2 + 180, y: HOLE_Y, s: 1 }] };
+  var SOLO_TOUCH = { p1: [{ x: W / 2 - 230, y: 380, s: 1.08 }, { x: W / 2, y: 380, s: 1.08 }, { x: W / 2 + 230, y: 380, s: 1.08 }] };
   var TAP_REACH = 125;          // max distance (logical px) from a hole's centre
   var CLIP_TOP = HOLE_Y - 168;
+  // Solo booth: the right-hand hole's pop-up faces inward (presentation only;
+  // mirror-unsafe art is never flipped - see ESA.canMirror).
+  var L_FLIP = [false, false, true];
 
   /*
    * Difficulty curve. Every stage duration eases from its EARLY value to its
@@ -77,15 +90,24 @@
 
     var who = ESA.describeMatchup(setup);
     this.players = { p1: who.p1, p2: who.p2 };
+    this.single = !!(api && api.context && api.context.single) || who.single;
+    this.sides = this.single ? ["p1"] : SLOTS;
+    this.duration = this.single ? SOLO_SECONDS : MATCH_SECONDS;
+    // Solo pop-ups: any roster member except the player's own character.
+    var mine = who.p1.character && (who.p1.character.baseId || who.p1.character.id);
+    this.victims = this.single ? ESA.Characters.list().map(function (c) { return c.id; })
+      .filter(function (id) { return id !== mine; }) : null;
+    if (this.victims && !this.victims.length) this.victims = [ESA.Characters.list()[0].id];
     // The booth backdrop bakes in names and colours, so cache it per matchup.
     // Touch devices get the head-to-head layout (chosen once per match).
     this.touchLayout = !!(ESA.Touch && ESA.Touch.active);
-    this.layout = this.touchLayout ? TOUCH_LAYOUT : DESKTOP_LAYOUT;
+    this.layout = this.single ? (this.touchLayout ? SOLO_TOUCH : SOLO_DESKTOP)
+                              : (this.touchLayout ? TOUCH_LAYOUT : DESKTOP_LAYOUT);
     this.layerKey = "arena-bonk:" + who.p1.name + "|" + who.p1.color + "|" +
-                    who.p2.name + "|" + who.p2.color + (this.touchLayout ? "|touch" : "");
+                    (this.single ? "solo" : who.p2.name + "|" + who.p2.color) + (this.touchLayout ? "|touch" : "");
 
     this.score = { p1: 0, p2: 0 };
-    this.timeLeft = MATCH_SECONDS;
+    this.timeLeft = this.duration;
     this.state = "idle";
     this.lastShownSecond = -1;
 
@@ -117,7 +139,7 @@
 
     this.score.p1 = 0;
     this.score.p2 = 0;
-    this.timeLeft = MATCH_SECONDS;
+    this.timeLeft = this.duration;
     this.lastShownSecond = -1;
     this.fx.clear();
     this.swing.p1 = null;
@@ -128,14 +150,14 @@
     this.holeMiss.p2 = [0, 0, 0];
 
     this.targets.p1 = this.makeTarget("p1", 0.5);
-    this.targets.p2 = this.makeTarget("p2", 0.8);
+    this.targets.p2 = this.single ? null : this.makeTarget("p2", 0.8);
 
     // Only the current matchup's backdrop stays cached.
     ESA.Stage.evictLayers("arena-bonk:", this.layerKey);
 
     ESA.UI.setScore("p1", 0);
-    ESA.UI.setScore("p2", 0);
-    ESA.UI.setCenter("Time", MATCH_SECONDS, false);
+    if (!this.single) ESA.UI.setScore("p2", 0);   // single: that panel shows the session best
+    ESA.UI.setCenter("Time", this.duration, false);
 
     this.state = "countdown";
     ESA.UI.countdown(this.timers, function () {
@@ -155,7 +177,7 @@
 
   /** 0 at the start of the match, 1 at the end. */
   BonkBooth.prototype.progress = function () {
-    return ESA.clamp(1 - this.timeLeft / MATCH_SECONDS, 0, 1);
+    return ESA.clamp(1 - this.timeLeft / this.duration, 0, 1);
   };
 
   /** Difficulty 0..1: smoothstep of progress - gentle start, steady middle ramp. */
@@ -196,6 +218,8 @@
       tellFor: curve("tell", k),
       riseFor: curve("rise", k),
       activeFor: curve(isBomb ? "bombActive" : "active", k),
+      // Solo: who pops up this time (versus: always the rival).
+      victim: this.victims ? this.victims[ESA.randInt(0, this.victims.length - 1)] : null,
       retreatFor: curve("retreat", k),
       stunFor: curve("stun", k),
       rise: 0,
@@ -255,8 +279,8 @@
   BonkBooth.prototype.onKeyDown = function (code) {
     if (this.state !== "playing") return;
 
-    for (var i = 0; i < SLOTS.length; i++) {
-      var side = SLOTS[i];
+    for (var i = 0; i < this.sides.length; i++) {
+      var side = this.sides[i];
       var idx = ESA.CONTROLS[side].booth.indexOf(code);
       if (idx >= 0) this.attempt(side, idx);
     }
@@ -269,13 +293,13 @@
    */
   BonkBooth.prototype.onTap = function (x, y) {
     if (this.state !== "playing") return;
-    var side = x < W / 2 ? "p1" : "p2";
-    var best = -1, bestD = TAP_REACH;
+    var side = this.single || x < W / 2 ? "p1" : "p2";
+    var best = -1, bestD = Infinity;
     for (var h = 0; h < 3; h++) {
       var L = this.layout[side][h];
       // Aim point sits above the hole, where the rival's head pops up.
       var d = Math.hypot(x - L.x, y - (L.y - 46 * L.s));
-      if (d < bestD) { bestD = d; best = h; }
+      if (d < TAP_REACH * Math.max(1, L.s) && d < bestD) { bestD = d; best = h; }
     }
     if (best >= 0) this.attempt(side, best);
   };
@@ -434,8 +458,8 @@
   BonkBooth.prototype.update = function (dt, now) {
     this.fx.update(dt);
 
-    for (var i = 0; i < SLOTS.length; i++) {
-      var side = SLOTS[i];
+    for (var i = 0; i < this.sides.length; i++) {
+      var side = this.sides[i];
       if (this.swing[side]) {
         this.swing[side].t -= dt;
         if (this.swing[side].t <= 0) this.swing[side] = null;
@@ -449,7 +473,7 @@
     if (this.state !== "playing") return;
 
     this.advance("p1", dt);
-    this.advance("p2", dt);
+    if (!this.single) this.advance("p2", dt);
 
     this.timeLeft -= dt;
     if (this.timeLeft < 0) this.timeLeft = 0;
@@ -467,6 +491,23 @@
   BonkBooth.prototype.finish = function () {
     this.state = "matchEnd";
     ESA.UI.setCenter("Time", 0, false);
+
+    if (this.single) {
+      // Score Attack: one number, no winner. Solo turns it into RUN COMPLETE.
+      var sc = this.score.p1;
+      ESA.Audio.play("matchWin");
+      this.celebrate();
+      this.api.endMatch({
+        winner: null,
+        single: true,
+        score: sc,
+        kicker: "Booth Closed",
+        title: "Run Complete",
+        text: "Finished on " + sc + (Math.abs(sc) === 1 ? " point" : " points") + ". Accuracy pays.",
+        scores: { p1: sc, p2: 0 }
+      });
+      return;
+    }
 
     var z = this.score.p1, s = this.score.p2;
     var winner = z === s ? null : (z > s ? "p1" : "p2");
@@ -514,7 +555,7 @@
    * ================================================================== */
 
   /** Everything that never moves, rendered once. */
-  function drawBoothLayer(g, players, layout, touch) {
+  function drawBoothLayer(g, players, layout, touch, single) {
     /* --- Back wall --------------------------------------------------- */
     var wall = g.createLinearGradient(0, 0, 0, H);
     wall.addColorStop(0, "#0d2a49");
@@ -541,9 +582,9 @@
 
     // Booth spotlights: a soft pool of light above each hole, so the back
     // wall reads as a lit attraction rather than an empty panel.
-    SLOTS.forEach(function (side) {
-      if (touch) {
-        // Head-to-head: a soft pool of light behind each hole instead.
+    (single ? ["p1"] : SLOTS).forEach(function (side) {
+      if (touch || single) {
+        // Head-to-head / solo: a soft pool of light behind each hole instead.
         layout[side].forEach(function (L) {
           var pool = g.createRadialGradient(L.x, L.y - 50, 4, L.x, L.y - 50, 92);
           pool.addColorStop(0, "rgba(243,195,90,.16)");
@@ -571,7 +612,8 @@
     });
 
     /* --- Side colour columns ---------------------------------------- */
-    [[players.p1.color, 0, 1], [players.p2.color, W, -1]].forEach(function (c) {
+    (single ? [[players.p1.color, 0, 1], [players.p1.color, W, -1]]
+            : [[players.p1.color, 0, 1], [players.p2.color, W, -1]]).forEach(function (c) {
       var grad = g.createLinearGradient(c[1], 0, c[1] + 120 * c[2], 0);
       grad.addColorStop(0, "rgba(" + rgbOf(c[0]) + ",.22)");
       grad.addColorStop(1, "rgba(0,0,0,0)");
@@ -580,6 +622,7 @@
     });
 
     /* --- Centre divider ---------------------------------------------- */
+    if (!single) {
     g.save();
     g.globalAlpha = 0.5;
     var div = g.createLinearGradient(0, 96, 0, H - 40);
@@ -589,6 +632,7 @@
     g.fillStyle = div;
     g.fillRect(W / 2 - 1.5, 96, 3, H - 136);
     g.restore();
+    }
 
     /* --- Marquee ------------------------------------------------------ */
     var mw = 460, mh = 62, mx = W / 2 - mw / 2, my = 16;
@@ -636,9 +680,10 @@
     g.letterSpacing = "0px";
 
     /* --- Side name plates --------------------------------------------- */
-    SLOTS.forEach(function (side) {
+    (single ? ["p1"] : SLOTS).forEach(function (side) {
       var c = players[side];
-      var px = touch ? (side === "p1" ? W / 2 - 150 : W / 2 + 150)
+      var px = single ? W / 2
+             : touch ? (side === "p1" ? W / 2 - 150 : W / 2 + 150)
                      : (side === "p1" ? W * 0.25 : W * 0.75);
       g.save();
       g.fillStyle = "rgba(4,14,26,.6)";
@@ -653,12 +698,12 @@
       g.textAlign = "center";
       g.textBaseline = "middle";
       g.letterSpacing = "3px";
-      g.fillText(c.name.toUpperCase() + "'S SIDE", px, 115);
+      g.fillText(c.name.toUpperCase() + (single ? "'S BOOTH" : "'S SIDE"), px, 115);
       g.restore();
     });
 
     /* --- Head-to-head VS badge (touch layout) ------------------------ */
-    if (touch) {
+    if (touch && !single) {
       g.save();
       g.fillStyle = "rgba(4,14,26,.9)";
       g.beginPath(); g.arc(W / 2, H / 2 + 20, 30, 0, Math.PI * 2); g.fill();
@@ -916,8 +961,8 @@
    * ------------------------------------------------------------------ */
   BonkBooth.prototype.draw = function (ctx, now) {
     var players = this.players;
-    var layout = this.layout, touch = this.touchLayout;
-    var layer = ESA.Stage.layer(this.layerKey, function (g) { drawBoothLayer(g, players, layout, touch); });
+    var layout = this.layout, touch = this.touchLayout, single = this.single;
+    var layer = ESA.Stage.layer(this.layerKey, function (g) { drawBoothLayer(g, players, layout, touch, single); });
     ESA.Stage.blit(ctx, layer);
 
     // Marquee bulbs - the only animated part of the booth chrome.
@@ -935,8 +980,8 @@
     }
 
     // Holes, back to front: back rim, character, front lip, keycap.
-    for (var i = 0; i < SLOTS.length; i++) {
-      var side = SLOTS[i];
+    for (var i = 0; i < this.sides.length; i++) {
+      var side = this.sides[i];
       var t = this.targets[side];
       var color = this.players[side].color;
       var labels = ESA.controlsFor(side, "booth").caps;
@@ -997,7 +1042,7 @@
     if (t.type === "bomb") {
       drawBoothBomb(ctx, cx, feetY - 46, now);
     } else {
-      var victim = this.players[victimOf(side)].character.id;
+      var victim = t.victim || this.players[victimOf(side)].character.id;
       var wasHit = (t.hitType === "bonk");
 
       // Squash on impact, settling over reactT.
@@ -1021,7 +1066,7 @@
       var blend = wasHit ? ESA.clamp((0.34 - t.reactT) / 0.09, 0, 1) : 0;
       ESA.drawSpriteBlend(ctx, victim, blend, cx, feetY, {
         height: SPRITE_H,
-        flip: side === "p2",
+        flip: side === "p2" || (this.single && L_FLIP[t.hole]),
         scaleX: sx,
         scaleY: sy,
         rotate: rot
@@ -1054,6 +1099,16 @@
     accent: "#4fb7c9",
     canTie: true,
     tournamentEligible: true,
+    // Solo: a one-player Score Attack run (no CPU, no difficulty).
+    soloEligible: true,
+    soloModeType: "score-attack",
+    solo: { mode: SOLO_SECONDS + " seconds",
+            blurb: "Bonk every ESA member who pops up. Skip the bombs.", touchBlurb: "Tap every ESA member who pops up. Skip the bombs.",
+            description: "A solo run. ESA members pop out of your three holes - <b>hit the key under the hole</b> before they " +
+                         "drop: <b>+1</b>. Wrong key: <b>−1</b>, one swing per pop-up. Leave bombs alone (<b>−2</b>). " +
+                         "It speeds up as the clock runs down. Beat your session best.",
+            touchDescription: "A solo run. ESA members pop out of the three holes - <b>tap them</b> before they drop: <b>+1</b>. " +
+                              "Wrong hole: <b>−1</b>, one tap per pop-up. Leave bombs alone (<b>−2</b>). It speeds up as the clock runs down." },
     enabled: true,
     create: function (api, setup) { return new BonkBooth(api, setup); }
   });

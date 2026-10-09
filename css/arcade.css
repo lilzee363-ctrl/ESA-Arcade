@@ -527,18 +527,23 @@ body.is-attract .welcome-emblem img { animation-duration: 3.6s; }
 }
 .intro-rules b { color: var(--gold-300); font-weight: 700; }
 
+/* Two equal columns that are allowed to SHRINK (minmax(0, 1fr)): a plain
+   1fr track never goes below its content, so five key caps + a long name
+   (EVIL SHAZA, a Guest) pushed the right panel out of the card. */
 .intro-controls {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
   width: 100%;
+  min-width: 0;
   margin: 2px 0 4px;
 }
 .ctrl {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: clamp(8px, 1vw, 12px);
+  min-width: 0;
+  padding: 12px clamp(10px, 1.2vw, 14px);
   border-radius: var(--radius-md);
   background: rgba(5, 16, 31, .66);
   border: 1px solid rgba(255, 255, 255, .08);
@@ -572,8 +577,11 @@ body.is-attract .welcome-emblem img { animation-duration: 3.6s; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ctrl-keys { display: flex; gap: 5px; align-items: center; flex: none; }
-.ctrl-keys .keycap { min-width: 30px; height: 30px; font-size: 13px; padding: 0 6px; }
+/* Key caps keep their size while there is room, then shrink, then wrap -
+   always inside their own panel. */
+.ctrl-keys { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; align-items: center; flex: 0 1 auto; min-width: 0; }
+.ctrl-keys .keycap { min-width: clamp(22px, 2.3vw, 30px); height: clamp(24px, 2.6vw, 30px); font-size: clamp(11px, 1.1vw, 13px); padding: 0 clamp(3px, .5vw, 6px); }
+.ctrl-keys .so-cpu-chip { white-space: normal; text-align: center; }
 
 .intro-actions { display: flex; gap: 12px; align-items: center; margin-top: 4px; }
 
@@ -1050,3 +1058,106 @@ body.is-attract .welcome-emblem img { animation-duration: 3.6s; }
    -------------------------------------------------------------------------- */
 .hud-face { position: relative; display: block; overflow: hidden; }
 .hud-face img, .rp-crop img { display: block; }
+
+/* --------------------------------------------------------------------------
+   V4 AMBIENCE (menus only; js/attract.js drives the attract-mode moments)
+   Always: a faint ESA emblem breathing far behind everything and a few
+   slow star twinkles. Attract mode (idle): slightly richer, plus ONE rare
+   moment at a time - body.amb-m-glint / amb-m-pulse / amb-m-scan.
+   Compositor-friendly only: transform + opacity, no filters animated.
+   -------------------------------------------------------------------------- */
+.amb-emblem {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(62vmin, 560px);
+  height: min(62vmin, 560px);
+  margin: calc(min(62vmin, 560px) / -2) 0 0 calc(min(62vmin, 560px) / -2);
+  opacity: .035;
+  pointer-events: none;
+  animation: embBreathe 14s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.amb-emblem img { width: 100%; height: 100%; object-fit: contain; }
+@keyframes embBreathe {
+  0%, 100% { transform: scale(1); opacity: .03; }
+  50%      { transform: scale(1.035); opacity: .05; }
+}
+body.is-attract .amb-emblem { animation-duration: 9s; }
+
+.amb-stars { position: absolute; inset: 0; pointer-events: none; }
+.amb-stars i {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #fff6e4;
+  box-shadow: 0 0 6px rgba(243, 195, 90, .9);
+  opacity: 0;
+  animation: starTwinkle 7s ease-in-out var(--d) infinite;
+}
+@keyframes starTwinkle {
+  0%, 70%, 100% { opacity: 0; transform: scale(.6); }
+  82%           { opacity: .55; transform: scale(1); }
+}
+body.is-attract .amb-stars i { animation-duration: 4.5s; }
+
+/* Moment: a glint travels round the top-right corner. */
+.amb-glint {
+  position: absolute;
+  right: 9%;
+  top: 11%;
+  width: 120px;
+  height: 120px;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, transparent 47%, rgba(255, 246, 228, .9) 50%, transparent 53%),
+    linear-gradient(0deg, transparent 47%, rgba(255, 246, 228, .9) 50%, transparent 53%),
+    radial-gradient(circle, rgba(243, 195, 90, .55), transparent 40%);
+}
+body.amb-m-glint .amb-glint { animation: ambGlint 2.4s ease-out; }
+@keyframes ambGlint {
+  0%   { opacity: 0; transform: scale(.3) rotate(0deg); }
+  25%  { opacity: .9; transform: scale(1) rotate(45deg); }
+  100% { opacity: 0; transform: scale(.5) rotate(90deg); }
+}
+
+/* Moment: a soft CRT scanline pass down the field. */
+.amb-scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 90px;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(243, 195, 90, .07) 45%, rgba(255, 246, 228, .12) 50%, rgba(243, 195, 90, .07) 55%, transparent);
+}
+body.amb-m-scan .amb-scan { animation: ambScan 2.5s linear; }
+@keyframes ambScan {
+  0%   { opacity: 0; transform: translateY(-100px); }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(110vh); }
+}
+
+/* Moment: the background emblem gives one slow gold pulse. */
+body.amb-m-pulse .amb-emblem { animation: embPulse 2.5s ease-in-out; }
+@keyframes embPulse {
+  0%, 100% { transform: scale(1); opacity: .04; }
+  45%      { transform: scale(1.06); opacity: .12; }
+}
+
+/* Gameplay: the ambience is gone (nothing animates behind a match). */
+body.is-gameplay .amb-emblem,
+body.is-gameplay .amb-stars,
+body.is-gameplay .amb-glint,
+body.is-gameplay .amb-scan { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .amb-emblem, .amb-stars i, .amb-glint, .amb-scan { animation: none !important; }
+  .amb-stars i { opacity: .25; }
+}

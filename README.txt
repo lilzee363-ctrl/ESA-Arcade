@@ -1,4 +1,4 @@
-ESA ARCADE - V3
+ESA ARCADE - V4
 ===============
 
 A two-player party game collection for the Egyptian Students Association.
@@ -24,10 +24,18 @@ Keep the folder structure unchanged so the image paths resolve.
 
 FLOW
 ----
-Welcome -> Mode Select -> CASUAL or TOURNAMENT
+Welcome -> Mode Select -> CASUAL, SOLO or TOURNAMENT
 
 Casual:     Character Select -> VS -> Game Library -> Intro -> Match ->
             Results (Rematch / Game Library / Change Players)
+Solo:       Your Fighter (Normal / Evil / Guest) -> Solo Game, then
+            VS CPU (Air Hockey, Bomb Pass): CPU Difficulty -> VS -> Intro ->
+              Match -> WIN / LOSS / DRAW (Rematch / Change Difficulty /
+              Change Character / Solo Game Select / Session Stats /
+              Back to Arcade)
+            SCORE ATTACK (Coin Rush, Bonk Booth): Intro -> one-player run ->
+              RUN COMPLETE: score + session best (Retry / Change Character /
+              Solo Game Select / Session Stats / Back to Arcade)
 Tournament: Participant Select -> Intro -> [Game Draw -> Fixtures -> Hub ->
             matches -> Standings] per league round -> Bracket ->
             knockout rounds -> The Final -> Champion
@@ -45,6 +53,14 @@ the champion screen pick it up automatically. Optional fields: portrait,
 selected, victory art, tagline, victoryAnimation (a CSS class).
 
 Current roster: Zima, Shaza, Gneady, Ahmood, Saif, Amr, Adam, Maryam, Lama.
+
+MIRROR SAFETY: art with readable text / numbers / logos must not be
+flipped. Add  mirrorSafe: false  (or { normal: true, hurt: false }) to the
+registry entry; ESA.drawSprite and the side-flipping menu art (P2 select
+panel, VS, Final) then leave it unflipped and rely on placement. Evil
+variants inherit the rule; Guests default to safe. Presentation only.
+Currently unsafe: Zima (both), Amr (both), Adam (both), Lama (normal),
+Gneady (hurt), Ahmood (hurt).
 
 Art with transparent padding (e.g. 1024x1024 exports) is cropped and scaled
 IN CODE from the "trim" numbers in each registry entry - the PNGs are never
@@ -67,13 +83,21 @@ looks and plays exactly as before.
 
   Menus           designed for portrait (touch wording: Tap to Start, Tap to
                   choose, swipe the arcade floor); safe-area aware.
-  Entering a game ROTATE TO PLAY (3-2-1, never blocks) -> how-to card with
-                  PLAY / CONTROLS / BACK (auto-starts after 6 s).
-  Gameplay        ALWAYS landscape. If the phone stays portrait (or rotation
-                  lock is on) the play scene is drawn rotated, so turning the
-                  phone gives a full-screen landscape game. Android also gets
-                  fullscreen + landscape lock when Start is tapped.
-  HUD             slim bar: pause, scores / clock, gear (Controls).
+  Entering a game how-to card with PLAY / CONTROLS / BACK, already inside
+                  the landscape game (auto-starts after 6 s).
+  Gameplay        a FULL-SCREEN LANDSCAPE game, without turning the phone.
+                  Phone upright: body.vland rotates ONLY the gameplay layers
+                  (play screen, touch controls, pause menu, how-to card) into
+                  a landscape box covering the whole screen; touches are
+                  inverse-mapped into it (Touch.localPoint). Phone turned
+                  anyway: the real landscape viewport is used, nothing is
+                  rotated - never a double rotation. Menus stay portrait.
+                  Page scroll is locked during play. Viewport size is measured
+                  live (Safari bars), safe areas are remapped. Android also
+                  gets fullscreen + landscape lock on Start.
+  HUD             one bar, every block the same height: pause | P1 face name
+                  score | centre (FIRST TO 5 / time) | score name face P2 |
+                  gear. Solo adds a tiny YOU / CPU - HARD line.
   Controls        compact translucent joystick that floats to your thumb
                   anywhere on your half, plus action buttons where needed.
   Air Hockey      joystick + DASH          Coin Rush / Bomb Pass  joystick only
@@ -83,15 +107,40 @@ looks and plays exactly as before.
                   Size, Visibility, Swap, Reset. P1 and P2 each have their
                   own layout and zone.
 
+Solo shows ONE control set, tagged YOU: Air Hockey joystick + DASH, Bomb
+Pass / Coin Rush joystick only, Bonk Booth direct taps. No dead P2 widgets.
+
+Stale pointers: a widget never stays owned by a finger that is gone (iOS
+Safari can swallow a pointerup). A new finger always takes a widget over,
+a primary touch releases anything still held, window-level pointerup /
+pointercancel / touchend release wherever the event lands, and resize,
+orientation change, blur, page hide, visibility change, pause, resume,
+restart and exit release everything. See STALE POINTERS in js/touch.js.
+
 Control preferences live in localStorage key "esaArcade.touchControls.v1"
 (positions normalized 0..1, sizes, opacity). Nothing else is stored.
 
 INPUT ARCHITECTURE: games read ESA.Controls.vector(slot) (normalized move)
 and receive game.onAction(slot, "action1"). Keyboard and the touch joystick
-are providers; a future CPU registers one more. Registry entries declare
+are providers; a Solo CPU (js/cpu.js) is one more, and claims its
+slot so the arrow keys / Enter can't steer it. Registry entries declare
   touch: { movement: "joystick"|"none", actions: [{id, label}],
            interaction: "directTap", help: [...] }
 Files: js/controls.js, js/touch.js, css/touch.css.
+
+MOVEMENT IS STATE: keys update held state immediately (keydown/keyup;
+auto-repeat only re-asserts a held key, it never moves anyone); the one game
+loop reads ESA.Controls.vector() every frame. Four held directions combine
+and opposing keys on the same axis resolve LAST PRESSED WINS (hold A, press
+D = right at once; release D with A still down = left again), independently
+for left/right and up/down; the result is normalised so diagonals are never
+faster. The touch joystick is full 360
+degree analog: 7% dead zone, full speed at half the remaining travel, an
+ease-out curve so short flicks are already fast, and the knob is drawn at
+exactly the magnitude the game receives. In Solo the arrow keys and Enter
+also drive the human (setKeyboardAlias). DASH and other presses are the only
+one-shot inputs. Air Hockey mallet response: see ACCEL / OVERSPEED / REVERSE
+/ TURN / BRAKE at the top of js/airhockey.js (top speed unchanged).
 
 Controls belong to the PLAYER SLOT, not the character:
    P1  W A S D (move)  ·  A S D (Bonk Booth)  ·  Space = select / confirm
@@ -200,6 +249,7 @@ css/arcade.css          Shell, ambient, shutter transition, welcome,
 css/menus.css           Top bar/BACK, bezel, CRT, mode select, character
                         select, VS, game library, modals, mascot.
 css/tournament.css      All tournament screens.
+css/solo.css            Solo screens, mode row, Session Stats, Solo result.
 
 js/core.js              Utilities, pausable TimerGroup, Audio, Input,
                         Assets, veil transitions, particle pool.
@@ -208,9 +258,16 @@ js/registry.js          GAME REGISTRY.
 js/arena.js             ESA.Stage (canvas) and ESA.UI (HUD, results).
 js/bombpass.js          Game 1.        js/coinrush.js   Game 2.
 js/bonkbooth.js         Game 3.        js/airhockey.js  Game 4.
-js/controls.js          ESA.Controls: normalized input from keyboard / touch / (future CPU).
+js/controls.js          ESA.Controls: normalized input from keyboard / touch / CPU,
+                        plus slot ownership (claim / release).
+js/cpu.js               ESA.CPU: generic CPU controller + difficulty list.
+js/cpu-airhockey.js     Air Hockey CPU strategy.
+js/cpu-bombpass.js      Bomb Pass CPU strategy.
+js/solo-stats.js        ESA.SoloStats: Versus record + Score Attack (sessionStorage).
+js/solo.js              Solo screens, CPU opponent pick, Solo results.
 js/touch.js             ESA.Touch: touch mode, joystick + buttons (multitouch),
-                        rotate-to-play, Control Setup, saved preferences.
+                        stale-pointer recovery, rotate-to-play card, portrait
+                        fallback, Control Setup, saved preferences.
 css/touch.css           Touch controls, compact touch HUD, short-screen menus.
 js/status-effects.js    Shared status effects (stun / shrink / reverse / immunity).
 js/powerups.js          Shared power-ups: types, spawner, per-match Session.
@@ -281,7 +338,7 @@ to be playable by people who do not play video games.
 
     bombpass.js   PLAYER_SPEED 180, FUSE_MIN/MAX 10-18, WINS_NEEDED 3
     coinrush.js   PLAYER_SPEED 185, MATCH_SECONDS 60, TOKEN_COUNT 7
-    bonkbooth.js  MATCH_SECONDS 42, CURVE (early -> late value of every
+    bonkbooth.js  MATCH_SECONDS 42 (Solo SOLO_SECONDS 50), CURVE (early -> late value of every
                   stage: gap, tell, rise, active, retreat, stun, bomb
                   chance), LATE_GRACE_RISE. (stun is how long a bonked rival
                   is held up showing their hurt art - shorten it and the
@@ -294,3 +351,48 @@ to be playable by people who do not play video games.
                   system (speed, dash cooldown, collider radius) - unused today.
 
 Arena bounds live in js/arena.js as ESA.BOUNDS.
+
+
+SOLO MODE (one player on the device)
+------------------------------------
+Every current game is playable in Solo. Each registry entry declares
+  soloEligible: true, soloModeType: "cpu-versus" | "score-attack"
+and the Solo game select labels its card VS CPU or SCORE ATTACK.
+
+VS CPU (Air Hockey, Bomb Pass). The human is P1 (W A S D + Space / touch
+joystick + DASH). The CPU is a CPU participant ("cpu-bomb-hard-03", never a
+participant-NN id) on P2, drawn as a random permanent roster character
+(Normal 3x as likely as Evil; never your exact character + variant).
+Difficulty (Easy / Normal / Hard) changes AI behaviour only. Air Hockey:
+first to 5, no clock, same power-ups and physics. Bomb Pass: first to 3
+rounds, same proximity hand-off, no pass button.
+
+SCORE ATTACK (Coin Rush 60 s, Bonk Booth 50 s). One player, no CPU, no
+difficulty, no P2 controls. The game reads context.single and ends with
+result.score. Coin Rush thins the floor (7 -> 5 tokens) and drops tokens
+further away as the run goes on; Bonk Booth is one centred booth where
+random ESA members pop up, on the same early -> late curve and scoring
+(+1 / wrong -1 / bomb -2 / nothing 0, one attempt per pop-up).
+
+A new CPU-versus game: (1) expose observe(slot, view) - what a player can
+see, (2) ESA.CPU.registerStrategy(id, { create }), (3) soloEligible +
+soloModeType "cpu-versus". soloPool() requires the strategy, so no game can
+fake a CPU. A new Score Attack game (e.g. ESA Slice): honour
+context.single and report result.score - Session Stats needs no changes.
+
+The CPU only outputs a stick vector and DASH presses through
+ESA.Controls, so the game applies speed caps, the centre line, dash
+cooldown, STUN (no input), SHRINK and REVERSE to it exactly as to a human.
+The strategy never sees hidden state (spawn timers, RNG) and is not told
+it is reversed, so it can't compensate.
+
+SESSION STATS: sessionStorage "esaArcade.soloStats.v1" (survives refresh,
+gone with the tab; never localStorage). Two separate records:
+  VERSUS RECORD  overall / per difficulty / per game / per human
+                 participant W-D-L, win rate, current + best win streak (a
+                 draw neither extends nor breaks it), HARD CPU DEFEATED (+1
+                 for any CPU-versus WIN on Hard - Air Hockey or Bomb Pass).
+  SCORE ATTACK   per game: attempts, latest score, best this session.
+                 Never touches W-D-L, streaks or Hard CPU Defeated.
+Only completed matches / runs count; every Solo start gets a unique
+matchId and the recorder refuses a repeat, so results count exactly once.

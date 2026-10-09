@@ -5,13 +5,14 @@
    the short-window menu scroll fix. Desktop with mouse + keyboard renders
    exactly as before.
 
-   Orientation model
+   Orientation model (native - nothing is rotated with CSS)
      Menus     follow the device; portrait is the home orientation.
-     Gameplay  always landscape. When the viewport is portrait during play
-               (phone held upright / orientation lock on), body.force-landscape
-               renders the play scene rotated 90deg, so turning the phone shows
-               a full-screen landscape game. Safe-area insets are remapped into
-               the rotated frame via the --sa-* variables below.
+     Gameplay  always a FULL-SCREEN LANDSCAPE game. Phone held upright (or
+               rotation locked): body.vland rotates ONLY the gameplay layers
+               into a virtual landscape box that covers the whole screen (see
+               VIRTUAL LANDSCAPE below and the header of js/touch.js - touch
+               input is inverse-mapped there). Phone turned: the real
+               landscape viewport is used and nothing is rotated.
    ========================================================================== */
 
 :root {
@@ -26,30 +27,42 @@
 }
 @supports (height: 100dvh) { :root { --view-h: 100dvh; } }
 
-/* Rotated play scene: local top = screen right, local left = screen top. */
-body.force-landscape {
+/* --------------------------------------------------------------------------
+   VIRTUAL LANDSCAPE (body.vland - touch play screen, portrait viewport)
+   The gameplay layers become a landscape box W' x H' = viewport height x
+   viewport width, rotated 90deg clockwise about their top-left corner,
+   which sits at the viewport's right edge: the box covers the screen
+   exactly. --app-w / --app-h are measured live by js/touch.js (Safari bars
+   included). Safe-area insets are remapped into the rotated frame:
+   local top = screen right, local right = screen bottom, local bottom =
+   screen left, local left = screen top.
+   -------------------------------------------------------------------------- */
+body.vland {
   --sa-t: max(env(safe-area-inset-right, 0px), var(--fake-sa-r, 0px));
   --sa-r: max(env(safe-area-inset-bottom, 0px), var(--fake-sa-b, 0px));
   --sa-b: max(env(safe-area-inset-left, 0px), var(--fake-sa-l, 0px));
   --sa-l: max(env(safe-area-inset-top, 0px), var(--fake-sa-t, 0px));
-  --view-w: 100vh;
-  --view-h: 100vw;
+  --view-w: var(--app-h, 100vh);
+  --view-h: var(--app-w, 100vw);
 }
-@supports (height: 100dvh) { body.force-landscape { --view-w: 100dvh; } }
-
-body.force-landscape #playScreen,
-body.force-landscape #touchLayer,
-body.force-landscape #modalLayer,
-body.force-landscape #touchPreroll.is-help {
+body.vland #playScreen,
+body.vland #touchLayer,
+body.vland #modalLayer,
+body.vland #touchPreroll {
   position: fixed;
   inset: auto;
   top: 0;
-  left: 100vw;
-  width: var(--view-w);
-  height: var(--view-h);
+  left: var(--app-w, 100vw);
+  width: var(--app-h, 100vh);
+  height: var(--app-w, 100vw);
   transform-origin: 0 0;
   transform: rotate(90deg);
 }
+/* No page scroll / rubber-band while the game shell is up. */
+html.vland, html.vland body { overflow: hidden; overscroll-behavior: none; height: 100%; }
+body.vland #playScreen { animation: vlandIn .32s var(--ease-out, ease-out); }
+@keyframes vlandIn { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { body.vland #playScreen { animation: none; } }
 
 /* --------------------------------------------------------------------------
    Desktop-only / touch-only content
@@ -97,9 +110,9 @@ body.is-touch .ps-tile { -webkit-tap-highlight-color: transparent; touch-action:
   .screen:not(#playScreen) > * { margin-top: auto; margin-bottom: auto; flex-shrink: 0; }
   .screen.has-topbar { padding-top: 58px; padding-bottom: 14px; }
   #topbar { top: 10px; }
-  .mode-inner, .cs-inner, .ps-inner { height: auto; min-height: 100%; }
+  .mode-inner, .cs-inner, .ps-inner, .so-inner { height: auto; min-height: 100%; }
   .intro-inner { max-height: none; }
-  .mode-grid { grid-template-columns: 1fr 1fr; }
+  .mode-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .cs-stage { flex: none; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; }
   .cs-side { grid-row: 1; height: 168px; }
   .cs-roster-wrap { grid-column: 1 / -1; grid-row: 2; min-height: 250px; overflow: visible; }
@@ -133,6 +146,20 @@ body.is-touch .screen {
 }
 body.is-touch .screen.has-topbar { padding-top: calc(var(--sa-t) + 60px); }
 body.is-touch #mascot { display: none !important; }
+/* The header owns its band: scrolled content slides UNDER a solid strip,
+   never up against BACK / volume, and the buttons stay in the safe area. */
+body.is-touch #topbar::before {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(var(--sa-t) + 56px);
+  background: linear-gradient(180deg, rgba(3, 11, 22, .97) 0 72%, rgba(3, 11, 22, 0));
+  pointer-events: none;
+  z-index: -1;
+}
+body.is-touch[data-state="play"] #topbar::before { display: none; }
 
 /* Every touch menu is a scroll container anchored at the top: content that
    fits stays centred (auto margins), taller content scrolls - it can never
@@ -167,18 +194,31 @@ body.is-touch .cs-side.is-turn:not(.is-pending):not(.is-locked) { border-color: 
 /* --- Portrait menus: designed for a phone held upright ------------------ */
 @media (orientation: portrait) {
   body.is-touch .screen-title { font-size: clamp(22px, 6.6vw, 32px); letter-spacing: .12em; }
-  body.is-touch .screen-head { gap: 10px; }
+  body.is-touch .screen-head { gap: 10px; max-width: 100%; }
+  body.is-touch .screen-head .px-arrow { flex: none; }
 
   /* Welcome */
   body.is-touch .welcome-wordmark { font-size: clamp(54px, 17vw, 92px); }
   body.is-touch .press-start { padding: 16px 30px; }
   body.is-touch .welcome-foot { bottom: calc(var(--sa-b) + 16px); }
 
-  /* Mode select: two tall, easy-to-hit cards */
+  /* Mode select: stacked cards; the ACTIVE one follows the scroll
+     (js/menus.js). Active vs inactive never changes a card's geometry:
+     no scale, only a 3px lift, border, glow and brightness. */
   body.is-touch .mode-inner { gap: 16px; }
-  body.is-touch .mode-grid { grid-template-columns: 1fr; gap: 14px; }
+  body.is-touch .mode-grid { grid-template-columns: 1fr; gap: 14px; padding-bottom: 4px; }
   body.is-touch .mc-screen { height: clamp(70px, 11vh, 120px); }
-  body.is-touch .mc-cta { opacity: 1; color: var(--gold-300, #f3c35a); }
+  body.is-touch #modeScreen { scroll-snap-type: y proximity; scroll-padding: calc(var(--sa-t) + 60px) 0 calc(var(--sa-b) + 12px); }
+  body.is-touch .mode-card { scroll-snap-align: center; transform: none; opacity: .9; filter: saturate(.8) brightness(.9); }
+  body.is-touch .mode-card.is-focus {
+    transform: translateY(-3px);
+    opacity: 1;
+    filter: none;
+    border-color: var(--gold-300, #f3c35a);
+    box-shadow: 0 10px 0 #020810, 0 0 0 2px rgba(243, 195, 90, .45), 0 0 34px rgba(243, 195, 90, .38);
+  }
+  body.is-touch .mc-cta { opacity: .55; color: var(--gold-300, #f3c35a); animation: none; }
+  body.is-touch .mode-card.is-focus .mc-cta { opacity: 1; animation: none; }
 
   /* Character select: P1 / P2 cards on top, big roster below */
   body.is-touch .cs-stage { grid-template-columns: 1fr 1fr; grid-template-rows: auto 1fr; gap: 10px; }
@@ -229,11 +269,11 @@ body.is-touch #playScreen {
   justify-content: center;
 }
 body.is-touch #playScreen .stage {
-  --hud-h: clamp(30px, calc(var(--view-h) * .085), 46px);
+  --hud-h: clamp(30px, calc(var(--view-h) * .082), 44px);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: var(--hud-h) minmax(0, 1fr) var(--hud-h);
   grid-template-rows: var(--hud-h) auto;
-  gap: 5px 8px;
+  gap: 5px 6px;
   width: min(
     calc(var(--view-w) - var(--sa-l) - var(--sa-r) - 12px - 2 * var(--touch-gutter, 0px)),
     calc((var(--view-h) - var(--sa-t) - var(--sa-b) - var(--hud-h) - 14px) * 16 / 9));
@@ -244,28 +284,58 @@ body.is-touch .play-bar .game-mode,
 body.is-touch .play-bar .spacer,
 body.is-touch .play-bar .play-tag,
 body.is-touch .pause-btn .pb-word { display: none; }
+/* One HUD bar, every block exactly --hud-h tall:
+   [pause] [ YOU face name ... score | FIRST TO 5 | score ... name face CPU ] [gear]
+   Pause and the controls gear are equal squares at the two ends, so they
+   never crowd the scores. The gear's column stays reserved even when a
+   game has no controls to customise, so the bar never shifts. */
 body.is-touch .pause-btn,
 body.is-touch .ctl-btn {
   grid-row: 1;
+  width: var(--hud-h);
   height: var(--hud-h);
-  min-width: var(--hud-h);
-  padding: 0 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
   border-radius: 10px;
-  font-size: calc(var(--hud-h) * .4);
+  font-size: calc(var(--hud-h) * .36);
+  display: grid;
+  place-items: center;
 }
 body.is-touch .pause-btn { grid-column: 1; }
-body.is-touch .ctl-btn { grid-column: 3; font-size: calc(var(--hud-h) * .52); }
-body.is-touch .ctl-btn.hidden { display: none !important; }
-body.is-touch .hud { grid-column: 2; grid-row: 1; gap: 6px; height: var(--hud-h); }
-body.is-touch .hud-player { padding: 0 8px; gap: 7px; border-radius: 10px; min-height: 0; }
-body.is-touch .hud-face { width: calc(var(--hud-h) - 8px); height: calc(var(--hud-h) - 8px); }
-body.is-touch .hud-name { font-size: clamp(10px, calc(var(--hud-h) * .3), 14px); letter-spacing: .1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-body.is-touch .hud-tail { gap: 6px; }
-body.is-touch .hud-score { font-size: calc(var(--hud-h) * .66); }
-body.is-touch .pip { width: 8px; height: 8px; }
-body.is-touch .hud-center { min-width: calc(var(--hud-h) * 2.6); padding: 0 8px; border-radius: 10px; }
-body.is-touch .hud-label { font-size: clamp(7px, calc(var(--hud-h) * .2), 10px); letter-spacing: .18em; }
-body.is-touch .hud-value { font-size: calc(var(--hud-h) * .5); }
+body.is-touch .ctl-btn { grid-column: 3; font-size: calc(var(--hud-h) * .5); }
+body.is-touch .ctl-btn.hidden { display: grid !important; visibility: hidden; }
+body.is-touch .hud {
+  grid-column: 2;
+  grid-row: 1;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 5px;
+  height: var(--hud-h);
+  align-items: stretch;
+}
+body.is-touch .hud > * { box-sizing: border-box; height: var(--hud-h); min-height: 0; }
+body.is-touch .hud-player { padding: 0 8px 0 4px; gap: 7px; border-radius: 10px; }
+body.is-touch .hud-player.is-right { padding: 0 4px 0 8px; }
+body.is-touch .hud-face { width: calc(var(--hud-h) - 10px); height: calc(var(--hud-h) - 10px); border-width: 1.5px; }
+body.is-touch .hud-meta { flex: 1 1 auto; display: flex; align-items: center; overflow: hidden; }
+body.is-touch .hud-player.is-right .hud-meta { justify-content: flex-end; }
+body.is-touch .hud-name { font-size: clamp(10px, calc(var(--hud-h) * .3), 14px); letter-spacing: .08em; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+body.is-touch .hud-tail { flex: none; margin: 0; gap: 5px; }
+body.is-touch .hud-player.is-right .hud-tail { margin: 0; }
+body.is-touch .hud-score { font-size: calc(var(--hud-h) * .62); min-width: calc(var(--hud-h) * .7); }
+body.is-touch .pip { width: 7px; height: 7px; }
+body.is-touch .hud-center { min-width: calc(var(--hud-h) * 2.3); padding: 0 8px; border-radius: 10px; gap: 0; }
+body.is-touch .hud-label { font-size: clamp(7px, calc(var(--hud-h) * .2), 9px); letter-spacing: .16em; line-height: 1.1; white-space: nowrap; }
+body.is-touch .hud-value { font-size: calc(var(--hud-h) * .46); line-height: 1; }
+/* Solo: a tiny role line under each name (YOU / CPU - HARD). */
+body.is-touch .hud.is-solo .hud-meta { flex-direction: column; justify-content: center; align-items: flex-start; gap: 1px; }
+body.is-touch .hud.is-solo .hud-player.is-right .hud-meta { align-items: flex-end; }
+body.is-touch .hud.is-solo .hud-keys { display: block !important; font-size: clamp(7px, calc(var(--hud-h) * .19), 9px); letter-spacing: .14em; line-height: 1; max-width: 100%; }
+body.is-touch .hud.is-solo .hud-keys:empty { display: none !important; }
+/* Score Attack: the right block is the SESSION BEST, not a rival. */
+.hud-player.is-best .hud-face { display: none; }
+.hud-player.is-best .hud-name { color: var(--gold-300, #f3c35a); }
+.hud-player.is-best .hud-score { color: var(--cream, #fff6e4); opacity: .85; }
 body.is-touch #playScreen .canvas-frame { grid-column: 1 / -1; grid-row: 2; border-radius: 12px; }
 body.is-touch .banner { padding: 10px 26px; }
 
@@ -340,7 +410,9 @@ body.touch-play .result-actions .btn { min-height: 42px; }
   transition: opacity .2s, filter .2s, left .16s cubic-bezier(.2, .8, .2, 1), top .16s cubic-bezier(.2, .8, .2, 1);
   z-index: 2;
 }
-.tc-joy.is-floating, .tc-joy.is-dragging, .tc-btn.is-dragging { transition: opacity .2s, filter .2s; }
+/* A held or floating pad never animates its position: the joystick centre
+   used for the vector is always where the pad really is (no lag). */
+.tc-joy.is-active, .tc-joy.is-floating, .tc-joy.is-dragging, .tc-btn.is-dragging { transition: opacity .2s, filter .2s; }
 .tc-joy::before, .tc-btn::before { content: ""; position: absolute; inset: -22%; border-radius: 50%; }
 
 .tc-joy-base {
@@ -460,6 +532,7 @@ body.touch-play .result-actions .btn { min-height: 42px; }
   touch-action: manipulation;
 }
 .tp.hidden { display: none; }
+
 .tp.is-help { background: rgba(3, 11, 22, .78); }
 .tp.is-under-editor { visibility: hidden; }
 .tp .tp-rotate, .tp .tp-help { display: none; }
@@ -512,7 +585,6 @@ body.touch-play .result-actions .btn { min-height: 42px; }
   background: linear-gradient(180deg, rgba(21, 64, 108, .96), rgba(7, 26, 48, .97));
   box-shadow: 0 20px 50px rgba(0, 0, 0, .6);
 }
-body.force-landscape #touchPreroll.is-help { padding: calc(var(--sa-t) + 10px) calc(var(--sa-r) + 14px) calc(var(--sa-b) + 10px) calc(var(--sa-l) + 14px); }
 .tp-title { font: 800 clamp(22px, 5vmin, 30px) var(--font-display, sans-serif); letter-spacing: .16em; color: #f3c35a; text-transform: uppercase; }
 .tp-lines { list-style: none; margin: 2px 0 4px; padding: 0; display: grid; gap: 5px; width: 100%; }
 .tp-lines li {
@@ -535,7 +607,7 @@ body.force-landscape #touchPreroll.is-help { padding: calc(var(--sa-t) + 10px) c
 @keyframes tpBar { from { width: 0; } to { width: 100%; } }
 
 /* ==========================================================================
-   CONTROLS EDITOR (lives in the control layer, so it rotates with the game)
+   CONTROLS EDITOR (lives in the control layer, above the game)
    ========================================================================== */
 #modalLayer.is-under-editor { visibility: hidden; }
 .te {

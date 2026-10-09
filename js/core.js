@@ -342,6 +342,10 @@ window.ESA = window.ESA || {};
 
   var Input = {
     held: Object.create(null),
+    // Press order: code -> sequence number of its latest press. Lets
+    // movement resolve OPPOSING held keys as "last pressed wins".
+    order: Object.create(null),
+    _seq: 0,
     /** "play" blocks gameplay keys, "menu" blocks navigation keys, null blocks nothing. */
     mode: null,
     /** Replaced (never appended to) by main.js, so handlers can't stack. */
@@ -349,9 +353,13 @@ window.ESA = window.ESA || {};
 
     isDown: function (code) { return !!this.held[code]; },
 
+    /** When a held key was pressed (0 if it is not held). Higher = newer. */
+    pressedAt: function (code) { return this.held[code] ? (this.order[code] || 0) : 0; },
+
     clear: function () {
       var k;
       for (k in this.held) delete this.held[k];
+      for (k in this.order) delete this.order[k];
     },
 
     setMode: function (mode) {
@@ -369,23 +377,30 @@ window.ESA = window.ESA || {};
       var self = this;
 
       window.addEventListener("keydown", function (e) {
-        if (e.repeat) return;
         // Typing in a text field (Guest nickname) stays typing: only
         // Escape / Enter reach the app, and nothing is blocked or held.
         var t = e.target;
         if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
           if (e.code === "Escape" || e.code === "Enter" || e.code === "NumpadEnter") {
-            if (self.onPress) self.onPress(e.code, e);
+            if (!e.repeat && self.onPress) self.onPress(e.code, e);
           }
           return;
         }
         if (self._shouldBlock(e.code)) e.preventDefault();
+        // HELD STATE is the truth for movement; key-repeat is never used to
+        // move anyone. A repeat still re-asserts the key as held, so a key
+        // that was already down when held state was cleared (pause, resume,
+        // a mode change) comes back on its own instead of staying dead
+        // until it is released and pressed again.
+        if (!self.held[e.code]) self.order[e.code] = ++self._seq;   // a NEW press is the newest
         self.held[e.code] = true;
+        if (e.repeat) return;                 // presses (menus, DASH, bonks) fire once
         if (self.onPress) self.onPress(e.code, e);
       }, { passive: false });
 
       window.addEventListener("keyup", function (e) {
         delete self.held[e.code];
+        delete self.order[e.code];
       });
 
       // Any loss of focus drops every held key.

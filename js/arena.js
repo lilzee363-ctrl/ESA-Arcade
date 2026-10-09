@@ -304,6 +304,7 @@
         resultTitle: id("resultTitle"),
         resultKicker: id("resultKicker"),
         resultText: id("resultText"),
+        resultExtra: id("resultExtra"),
         resultPortrait: id("resultPortrait"),
         resultPortraitImg: id("resultPortraitImg"),
         resultScore: { p1: id("resultScoreP1"), p2: id("resultScoreP2") },
@@ -326,14 +327,32 @@
       this.el.value.textContent = cfg.centerValue || "—";
       this.el.center.classList.remove("is-urgent");
       this._players = cfg.players;
+      // Score Attack (one player): the right-hand panel shows the session
+      // best instead of a rival.
+      var single = !!cfg.single;
+      this.el.hud.p2.classList.toggle("is-best", single);
+      this.el.hud.p1.parentNode.classList.toggle("is-single", single);
+      // Solo: the key lines carry YOU / CPU · HARD, shown on touch too.
+      this.el.hud.p1.parentNode.classList.toggle("is-solo", !!cfg.keys);
 
       ESA.SLOTS.forEach(function (slot) {
+        if (slot === "p2" && single) {
+          var h = self.el.hud.p2;
+          h.style.setProperty("--pc", "var(--gold-400)");
+          self.el.face.p2.removeAttribute("src");
+          self.el.name.p2.textContent = "Session Best";
+          self.el.keys.p2.textContent = cfg.bestLabel || "";
+          self._scores.p2 = null;
+          self.setScore("p2", cfg.best === null || cfg.best === undefined ? "—" : cfg.best);
+          self._buildPips("p2", 0);
+          return;
+        }
         var who = cfg.players[slot];
         self.el.hud[slot].style.setProperty("--pc", who.color);
         ESA.setArt(self.el.face[slot], who.character, "normal", "head");
         self.el.name[slot].textContent = who.name;
-        self.el.keys[slot].textContent = ESA.CONTROLS[slot].short + " · " +
-                                         ESA.controlsFor(slot, cfg.scheme).text;
+        self.el.keys[slot].textContent = (cfg.keys && cfg.keys[slot]) ||
+          (ESA.CONTROLS[slot].short + " · " + ESA.controlsFor(slot, cfg.scheme).text);
         self._scores[slot] = null;
         self.setScore(slot, 0);
         self._buildPips(slot, cfg.pips || 0);
@@ -483,8 +502,10 @@
     /* --- Result ----------------------------------------------------- */
 
     /**
-     * @param {object} r        { winner: "p1"|"p2"|null, kicker, title, text, scores }
-     * @param {Array}  actions  [{ label, kind: "gold"|"ghost", onClick }]
+     * @param {object} r        { winner: "p1"|"p2"|null, kicker, title, text, scores,
+     *                            extra?: DOM node shown under the text (Solo record),
+     *                            outcome?: "win" | "loss" | "draw" (styling hook) }
+     * @param {Array}  actions  [{ label, kind: "gold"|"ghost"|"small", onClick }]
      *                          The first action is the Enter default.
      */
     showResult: function (r, actions) {
@@ -493,6 +514,17 @@
       e.resultKicker.textContent = r.kicker || "Match Over";
       e.resultTitle.textContent = r.title;
       e.resultText.textContent = r.text || "";
+      if (e.resultExtra) {
+        e.resultExtra.innerHTML = "";
+        if (r.extra) e.resultExtra.appendChild(r.extra);
+        e.resultExtra.classList.toggle("hidden", !r.extra);
+      }
+      var card = e.result.firstElementChild;
+      if (card) {
+        card.classList.remove("is-win", "is-loss", "is-draw-out", "is-solo", "is-run");
+        if (r.outcome === "run") card.classList.add("is-solo", "is-run");     // Score Attack: no versus score line
+        else if (r.outcome) card.classList.add("is-solo", r.outcome === "draw" ? "is-draw-out" : "is-" + r.outcome);
+      }
       ESA.SLOTS.forEach(function (slot) {
         e.resultScore[slot].textContent = r.scores ? r.scores[slot] : 0;
         if (players) e.resultScore[slot].style.color = players[slot].color;
@@ -512,7 +544,8 @@
       (actions || []).forEach(function (a, i) {
         var b = document.createElement("button");
         b.type = "button";
-        b.className = "btn " + (a.kind === "gold" ? "btn-gold" : "btn-ghost") + (i === 0 ? " is-default" : "");
+        b.className = "btn " + (a.kind === "gold" ? "btn-gold" : "btn-ghost") +
+                      (a.kind === "small" ? " btn-small" : "") + (i === 0 ? " is-default" : "");
         b.innerHTML = a.label + (i === 0 ? ' <span class="kbd-hint">Enter</span>' : "");
         b.addEventListener("click", a.onClick);
         e.resultActions.appendChild(b);
@@ -520,13 +553,13 @@
 
       e.result.classList.remove("hidden");
       // Restart the entrance animation on a rematch -> result cycle.
-      var card = e.result.firstElementChild;
       if (card) { card.style.animation = "none"; void card.offsetWidth; card.style.animation = ""; }
     },
 
     hideResult: function () {
       this.el.result.classList.add("hidden");
       if (this.el.resultActions) this.el.resultActions.innerHTML = "";
+      if (this.el.resultExtra) { this.el.resultExtra.innerHTML = ""; this.el.resultExtra.classList.add("hidden"); }
     },
 
     /** Activates the default (first) result action - Enter on the result card. */

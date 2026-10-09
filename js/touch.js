@@ -16,15 +16,44 @@
               help: ["JOYSTICK — MOVE", ...],
               tagline / description: touch wording for menus }
 
-   LANDSCAPE GAMEPLAY
-   ------------------
-   Menus follow the device (portrait is the home orientation). Games are
-   ALWAYS landscape: if the viewport is portrait during play (phone held
-   upright, or orientation lock on), body.force-landscape renders the play
-   scene rotated 90deg, so turning the phone shows a true full-screen
-   landscape game. All pointer maths goes through localPoint(), which maps
-   screen coordinates into that rotated frame. On Android, Start also asks
-   for fullscreen + a landscape lock (best effort, never required).
+   MENUS PORTRAIT, GAMEPLAY = FULL-SCREEN VIRTUAL LANDSCAPE
+   --------------------------------------------------------
+   Menus are normal portrait pages. Actual GAMEPLAY is always a landscape
+   game that fills the whole screen - and the phone does NOT have to be
+   turned. One shared wrapper does it for every game (present and future):
+
+     body.vland  is set while a touch device is on the play screen with a
+                 PORTRAIT viewport. Only the gameplay layers are rotated:
+                 #playScreen (stage, HUD, canvas, results), #touchLayer
+                 (joystick / buttons / Control Setup), #modalLayer (pause
+                 menu) and #touchPreroll (how-to card). Each is sized
+                 W' = viewport height, H' = viewport width (a landscape
+                 box), then rotate(90deg) about its top-left corner placed
+                 at the viewport's right edge - it exactly covers the
+                 screen. Menus, the welcome screen, setup screens, sheets
+                 and the veil are never rotated.
+     viewport    --app-w / --app-h are measured in JS (innerWidth /
+                 innerHeight - what fixed layers really get, Safari bars
+                 included) on every resize / visualViewport resize /
+                 orientation change, so 100vh is never trusted.
+     safe areas  the --sa-* insets are remapped into the rotated frame
+                 (local top = screen right, local left = screen top...).
+     input       every pointer goes through localPoint(), the exact inverse
+                 of that rotation (local x = clientY - top, local y =
+                 right - clientX), so the joystick, the buttons, editor
+                 drags and Bonk taps hit exactly what is drawn. Native hit
+                 testing already follows the transform, pointer ids and
+                 pointer capture are untouched.
+     physical    if the phone IS turned (viewport becomes landscape) the
+     rotation    wrapper simply switches off - the game is already
+                 landscape - so there is never a double rotation. Every
+                 switch releases all fingers and re-lays the controls out;
+                 the running game, loop, CPU, timers and score are not
+                 touched (it is presentation + input mapping only).
+   Page scroll is locked while gameplay is up (html.vland) and restored
+   when the play screen is left. Desktop never uses any of this. On
+   Android, Start also asks for fullscreen + a landscape lock (best
+   effort, never required).
 
    LIFECYCLE (no duplicate listeners, ever)
    ----------------------------------------
@@ -32,6 +61,23 @@
    config (show + position the existing widgets) and unmount()s it (release
    every pointer, zero every vector, hide). Each joystick / button tracks
    its own pointerId, so any number of fingers work at once.
+
+   STALE POINTERS (the iPhone "frozen joystick" fix)
+   --------------------------------------------------
+   iOS Safari can swallow a finger's pointerup / pointercancel (home-bar
+   and toolbar gestures, a viewport resize under the finger). A widget
+   that only let go on that exact event stayed owned by a finger that no
+   longer existed and refused every new touch - joystick and DASH dead
+   while the game and the CPU kept running. Now ownership is never trusted
+   blindly:
+     - a new finger on a widget always takes it over (old one released);
+     - a primary touch (no other finger on the glass) releases every
+       widget still owned by an older finger;
+     - pointerup / pointercancel anywhere in the window release that
+       finger wherever it was held, and a touchend with no fingers left
+       releases everything;
+     - resize, orientation change, blur, page hide / visibility change,
+       pause, resume, restart and exit all release every widget.
 
    SETTINGS - localStorage "esaArcade.touchControls.v1"
    ------------------------------------------------------
@@ -45,8 +91,18 @@
 
   var STORAGE_KEY = "esaArcade.touchControls.v1";
   var SLOTS = ["p1", "p2"];
-  var DEADZONE = 0.12;          // ignore tiny thumb wobble
-  var FULL_AT = 0.72;           // past 72% deflection = full speed (small pads feel quick)
+  // Joystick response (fraction of the knob travel, ~36px on a phone).
+  //   DEADZONE  thumb wobble ignored (~2.5px)
+  //   FULL_AT   past the dead zone, full speed at this much of the rest of
+  //             the travel (~17px of drag) - no long useless thumb travel
+  //   then an ease-out curve so a short flick is already most of the way
+  //   to full speed (keyboard is always full speed; touch must not feel
+  //   like it is "catching up"). No time smoothing anywhere: the vector is
+  //   recomputed on every pointermove and read by the game loop each frame.
+  // The knob is DRAWN at that same magnitude, so what you see is exactly
+  // what the game gets. Direction stays full 360-degree analog.
+  var DEADZONE = 0.07;
+  var FULL_AT = 0.5;
   var HELP_AUTOSTART_MS = 6000;
   var GAME_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
                    "Space", "Enter", "KeyJ", "KeyK", "KeyL"];
@@ -67,7 +123,7 @@
       p1: { joystick: { x: 0.09, y: 0.76 }, action1: { x: 0.08, y: 0.36 }, action2: { x: 0.2, y: 0.36 } },
       p2: { joystick: { x: 0.91, y: 0.76 }, action1: { x: 0.92, y: 0.36 }, action2: { x: 0.8, y: 0.36 } }
     },
-    // One human (future Solo / CPU): joystick left, actions right.
+    // One human (Solo vs CPU): joystick left, actions right.
     solo: {
       p1: { joystick: { x: 0.11, y: 0.74 }, action1: { x: 0.9, y: 0.74 }, action2: { x: 0.9, y: 0.44 } }
     }
@@ -151,7 +207,7 @@
 
   var Touch = {
     active: false,
-    rotated: false,
+    rotated: false,                // gameplay shown as virtual landscape (body.vland)
     settings: null,
     mounted: null,                 // { def, touch, layout, slots }
     editing: false,
@@ -185,14 +241,49 @@
           self.setActive(false);
         }
       }, true);
-      var relayout = function () { self.updateRotation(); self.layout(); };
+      // Any change of viewport (rotation, Safari bars, split view) drops
+      // every finger, then re-lays the controls out for the new size.
+      var lastW = 0, lastH = 0;
+      var relayout = function () {
+        var w = window.innerWidth, h = window.innerHeight;
+        if (w !== lastW || h !== lastH) { lastW = w; lastH = h; self.releaseAll(); }
+        self.updateOrientation();
+        self.layout();
+      };
       window.addEventListener("resize", relayout);
-      window.addEventListener("orientationchange", function () { setTimeout(relayout, 120); });
+      window.addEventListener("orientationchange", function () { self.releaseAll(); setTimeout(relayout, 120); });
+      // Safari bars / split view change the usable area without always
+      // firing a window resize.
+      if (window.visualViewport) window.visualViewport.addEventListener("resize", relayout);
       window.addEventListener("blur", function () { self.releaseAll(); });
-      document.addEventListener("visibilitychange", function () { if (document.hidden) self.releaseAll(); });
+      window.addEventListener("pagehide", function () { self.releaseAll(); });
+      window.addEventListener("pageshow", function () { self.releaseAll(); relayout(); });
+      document.addEventListener("visibilitychange", function () { self.releaseAll(); });
       document.addEventListener("fullscreenchange", function () { if (!document.fullscreenElement) immersive = false; });
+      // Orientation flips are also caught here (Safari sometimes changes the
+      // media state before it fires resize). One listener, added once.
+      try {
+        var oq = window.matchMedia("(orientation: portrait)");
+        if (oq.addEventListener) oq.addEventListener("change", relayout);
+        else if (oq.addListener) oq.addListener(relayout);
+      } catch (e) { /* old browsers: resize covers it */ }
+      // Window-level safety net for lost pointer events (see STALE POINTERS).
+      window.addEventListener("pointerup", function (e) { releasePointer(e.pointerId); }, true);
+      window.addEventListener("pointercancel", function (e) { releasePointer(e.pointerId); }, true);
+      window.addEventListener("pointerdown", function (e) {
+        if (e.pointerType === "touch" && e.isPrimary) releaseStale(e.pointerId);
+      }, true);
+      window.addEventListener("touchend", function (e) { if (e.touches && e.touches.length === 0) self.releaseAll(); }, { capture: true, passive: true });
+      window.addEventListener("touchcancel", function (e) { if (e.touches && e.touches.length === 0) self.releaseAll(); }, { capture: true, passive: true });
 
       this.setActive(primaryTouch());
+    },
+
+    /** True when the viewport is portrait (gameplay then goes virtual landscape). */
+    isPortraitView: function () {
+      var w = window.innerWidth, h = window.innerHeight;
+      if (w && h && Math.abs(w - h) > 8) return h > w;
+      try { return window.matchMedia("(orientation: portrait)").matches; } catch (e) { return h > w; }
     },
 
     setActive: function (on) {
@@ -202,7 +293,7 @@
       this.active = on;
       document.body.classList.toggle("is-touch", on);
       if (!on) this.releaseAll();
-      this.updateRotation();
+      this.updateOrientation();
       this.refresh();
       applyWording();
     },
@@ -210,21 +301,25 @@
     /** Called by App on every screen change. */
     onScreen: function (name) {
       if (name !== "play") this.exitImmersive();
-      this.updateRotation();
+      this.releaseAll();
+      this.updateOrientation();
     },
 
     /**
-     * Gameplay is landscape-only on touch: when the viewport is portrait
-     * during play, the play scene is rendered rotated (see force-landscape
-     * in css/touch.css). Never gates anything - purely presentation.
+     * The virtual-landscape switch (see the header). Touch + play screen +
+     * portrait viewport = rotate the gameplay layers; anything else = off.
+     * Presentation and input mapping only - the match itself never knows.
      */
-    updateRotation: function () {
-      var on = this.active && !!ESA.App && ESA.App.state === "play" && window.innerHeight > window.innerWidth;
+    updateOrientation: function () {
+      measureViewport();
+      var on = this.active && !!ESA.App && ESA.App.state === "play" && this.isPortraitView();
       if (on !== this.rotated) {
         this.rotated = on;
-        this.releaseAll();
+        this.releaseAll();                   // old finger coordinates mean nothing now
       }
-      document.body.classList.toggle("force-landscape", on);
+      document.body.classList.toggle("vland", on);
+      document.documentElement.classList.toggle("vland", on);
+      document.body.classList.remove("play-gated", "force-landscape");
     },
 
     /** Android: fullscreen + landscape lock on Start (user gesture). Best effort. */
@@ -232,12 +327,12 @@
       if (!this.active || !primaryTouch()) return;
       var el = document.documentElement;
       var so = window.screen && window.screen.orientation;
-      if (!el.requestFullscreen || !so || typeof so.lock !== "function") return;   // iOS: CSS rotation instead
+      if (!el.requestFullscreen || !so || typeof so.lock !== "function") return;   // iOS: virtual landscape instead
       try {
         el.requestFullscreen({ navigationUI: "hide" }).then(function () {
           immersive = true;
           return so.lock("landscape");
-        }).catch(function () { /* declined or unsupported: rotation fallback handles it */ });
+        }).catch(function () { /* declined or unsupported: virtual landscape covers it */ });
       } catch (e) { /* ignore */ }
     },
 
@@ -260,7 +355,7 @@
 
     /**
      * Show the controls a game declares. opts.layout "duo" (two humans on
-     * one device) or "solo" (one human; future CPU games).
+     * one device) or "solo" (one human vs a CPU).
      */
     mount: function (def, opts) {
       opts = opts || {};
@@ -294,6 +389,12 @@
       SLOTS.forEach(function (slot) {
         var w = widgets[slot];
         var used = show && m.slots.indexOf(slot) >= 0;
+        // One human on the device: the controls are simply "YOU".
+        var tag = m && m.layout === "solo" ? "YOU" : ESA.CONTROLS[slot].short;
+        [w.joystick, w.action1, w.action2].forEach(function (x) {
+          var t = x.el.querySelector(".tc-tag");
+          if (t && t.textContent !== tag) t.textContent = tag;
+        });
         var joy = used && m.touch.movement === "joystick";
         w.joystick.el.classList.toggle("hidden", !joy);
         w.zone.classList.toggle("hidden", !joy);
@@ -319,13 +420,14 @@
       var dims = sizes();
       // Landscape: keep a modest side gutter so the joystick sits mostly
       // beside the arena (matters on tablets, whose arena is width-limited).
+      // Solo has one control set, so only the side it uses needs room.
       var widest = 0;
       if (this.hasControls(m.def)) {
         m.slots.forEach(function (slot) {
           widest = Math.max(widest, clamp(dims.joy * self.profile(slot).joyScale, 80, 200));
         });
       }
-      setGutter(Math.round(widest * 0.55));
+      setGutter(Math.round(widest * (m.layout === "solo" ? 0.42 : 0.55)));
       var size = regionSize();
       if (!size.w || !size.h) return;
       m.slots.forEach(function (slot) {
@@ -341,10 +443,11 @@
         // left half (solo), minus a band at the top for the HUD.
         var z = zoneOf(slot), zs = w.zone.style;
         var zx0 = m.layout === "duo" ? z[0] : 0, zx1 = m.layout === "duo" ? z[1] : 0.5;
+        var top = 0.14;                          // leave the HUD band alone
         zs.left = (zx0 * size.w) + "px";
         zs.width = ((zx1 - zx0) * size.w) + "px";
-        zs.top = Math.round(size.h * 0.14) + "px";
-        zs.height = Math.round(size.h * 0.86) + "px";
+        zs.top = Math.round(size.h * top) + "px";
+        zs.height = Math.round(size.h * (1 - top)) + "px";
       });
       zones.classList.toggle("is-duo", m.layout === "duo");
     },
@@ -384,31 +487,15 @@
     joystick: function (slot) { var j = widgets[slot] && widgets[slot].joystick; return j ? { x: j.vx, y: j.vy } : { x: 0, y: 0 }; },
 
     /* ================================================================ *
-     * Rotate-to-play + control briefing (before the first kickoff)
+     * Control briefing (before the first kickoff) - already shown inside
+     * the landscape game, whatever way the phone is held.
      * ================================================================ */
-    /**
-     * opts: { timers: TimerGroup, onPlay(), onBack() }
-     * Purely informational: continues after ~3 s whatever the orientation.
-     */
+    /** opts: { timers: TimerGroup, onPlay(), onBack(), layout: "duo" | "solo" } */
     preroll: function (def, opts) {
-      var self = this;
       var gen = ++pre.gen;
       pre.def = def; pre.opts = opts; pre.timers = opts.timers; pre.autoStarted = false;
-      preEl.className = "tp is-rotate";
-      var n = byId("tpCount");
-      var steps = ["3", "2", "1"], i = 0;
-      function tick() {
-        if (gen !== pre.gen) return;
-        if (i < steps.length) {
-          n.textContent = steps[i++];
-          ESA.replayAnim(n, "is-beat");
-          ESA.Audio.play("countdown");
-          opts.timers.after(1000, tick);
-        } else {
-          self._showHelp(gen);
-        }
-      }
-      tick();
+      this.updateOrientation();
+      this._showHelp(gen);
     },
 
     _showHelp: function (gen) {
@@ -420,8 +507,9 @@
         return "<li><b>" + ESA.esc(parts[0]) + "</b>" + (parts[1] ? "<span>" + ESA.esc(parts[1]) + "</span>" : "") + "</li>";
       }).join("");
       byId("tpCustomize").classList.toggle("hidden", !this.hasControls(def));
-      // Show the controls underneath so players see where they are.
-      this.mount(def, { onTap: this.tapHandler });
+      // Show the controls underneath so players see where they are (in the
+      // match's own layout: Solo shows the single human control set).
+      this.mount(def, { onTap: this.tapHandler, layout: (pre.opts && pre.opts.layout) || "duo" });
       var bar = byId("tpBar");
       bar.classList.remove("is-running");
       void bar.offsetWidth;
@@ -519,24 +607,41 @@
   Touch.applyWording = applyWording;
 
   /* ================================================================== *
-   * Geometry - everything in the control region's LOCAL frame, which is
-   * rotated 90deg when body.force-landscape is on.
+   * Geometry - everything in the control region's LOCAL (landscape)
+   * frame. With body.vland the gameplay layers are rotated 90deg
+   * clockwise, so local top = screen right and local left = screen top.
    * ================================================================== */
 
-  /** Screen point -> element-local point (handles the rotated play scene). */
+  /**
+   * Screen point -> element-local point: the exact inverse of the
+   * gameplay rotation. getBoundingClientRect() of a rotated element is its
+   * screen-space box; its local origin (top-left) sits at the box's
+   * top-RIGHT corner.
+   */
   function localPoint(el, cx, cy) {
     var r = el.getBoundingClientRect();
     if (Touch.rotated) return { x: cy - r.top, y: r.right - cx, w: r.height, h: r.width };
     return { x: cx - r.left, y: cy - r.top, w: r.width, h: r.height };
   }
+
+  /** Live viewport size for the CSS (--app-w / --app-h), never 100vh. */
+  var vpW = 0, vpH = 0;
+  function measureViewport() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (w === vpW && h === vpH) return;
+    vpW = w; vpH = h;
+    var s = document.documentElement.style;
+    s.setProperty("--app-w", w + "px");
+    s.setProperty("--app-h", h + "px");
+  }
   Touch.localPoint = localPoint;
 
   function regionSize() { return { w: safe.offsetWidth, h: safe.offsetHeight }; }
 
-  /** Base sizes from the viewport's short side, capped for tablets. */
+  /** Base sizes from the viewport's short side, capped for tablets (thumb-sized, never giant). */
   function sizes() {
     var vmin = Math.min(window.innerWidth, window.innerHeight);
-    return { joy: clamp(vmin * 0.29, 100, 150), btn: clamp(vmin * 0.18, 64, 92) };
+    return { joy: clamp(vmin * 0.27, 96, 140), btn: clamp(vmin * 0.17, 62, 86) };
   }
 
   /** Horizontal fraction of the control region a slot may use. */
@@ -632,12 +737,37 @@
   function capture(el, pid) { try { el.setPointerCapture(pid); } catch (e) {} }
   function uncapture(el, pid) { try { if (el.hasPointerCapture(pid)) el.releasePointerCapture(pid); } catch (e) {} }
 
+  /** Release whichever widget is held by finger `pid` (wherever its events went). */
+  function releasePointer(pid) {
+    SLOTS.forEach(function (slot) {
+      var w = widgets[slot];
+      if (!w) return;
+      if (w.joystick.pid === pid) releaseJoystick(w.joystick);
+      if (w.action1.pid === pid) releaseButton(w.action1);
+      if (w.action2.pid === pid) releaseButton(w.action2);
+    });
+  }
+
+  /** A primary touch means no other finger is down: anything still held is stale. */
+  function releaseStale(pid) {
+    SLOTS.forEach(function (slot) {
+      var w = widgets[slot];
+      if (!w) return;
+      if (w.joystick.pid !== null && w.joystick.pid !== pid) releaseJoystick(w.joystick);
+      if (w.action1.pid !== null && w.action1.pid !== pid) releaseButton(w.action1);
+      if (w.action2.pid !== null && w.action2.pid !== pid) releaseButton(w.action2);
+    });
+  }
+
   /* --- Joystick --------------------------------------------------- */
   function wireJoystick(w, zone) {
     function start(e, el, floating) {
       e.preventDefault();
       if (Touch.editing) { if (!floating) startDrag(w, e); return; }
-      if (w.pid !== null) return;               // already owned by another finger
+      if (w.pid === e.pointerId) return;
+      // A new finger always wins: whatever held the stick before is either
+      // gone (a lost pointerup) or a second thumb - never block fresh input.
+      if (w.pid !== null) releaseJoystick(w);
       w.pid = e.pointerId;
       w.captor = el;
       capture(el, e.pointerId);
@@ -678,11 +808,19 @@
     var dy = (p.y - p.h / 2) / travel;
     var len = Math.hypot(dx, dy);
     if (len > 1) { dx /= len; dy /= len; len = 1; }
-    w.knob.style.transform = "translate(" + (dx * travel).toFixed(1) + "px," + (dy * travel).toFixed(1) + "px)";
-    if (len < DEADZONE || !isFinite(len)) { w.vx = 0; w.vy = 0; return; }
-    var mag = Math.min(1, ((len - DEADZONE) / (1 - DEADZONE)) / FULL_AT);
-    w.vx = dx / len * mag;
-    w.vy = dy / len * mag;
+    if (len < DEADZONE || !isFinite(len)) {
+      w.vx = 0; w.vy = 0;
+      w.knob.style.transform = "translate(" + (dx * travel).toFixed(1) + "px," + (dy * travel).toFixed(1) + "px)";
+      return;
+    }
+    var m = Math.min(1, ((len - DEADZONE) / (1 - DEADZONE)) / FULL_AT);
+    var mag = 1 - (1 - m) * (1 - m);                  // ease-out: quick to useful speed
+    var ux = dx / len, uy = dy / len;
+    w.vx = ux * mag;
+    w.vy = uy * mag;
+    // Knob shows the magnitude the game receives (never behind the thumb).
+    var k = Math.max(len, mag) * travel;
+    w.knob.style.transform = "translate(" + (ux * k).toFixed(1) + "px," + (uy * k).toFixed(1) + "px)";
   }
 
   function releaseJoystick(w) {
@@ -711,11 +849,12 @@
     w.el.addEventListener("pointerdown", function (e) {
       e.preventDefault();
       if (Touch.editing) { startDrag(w, e); return; }
-      if (w.pid !== null) return;
+      if (w.pid === e.pointerId) return;
+      if (w.pid !== null) releaseButton(w);       // stale owner: take over (see STALE POINTERS)
       w.pid = e.pointerId;
       capture(w.el, e.pointerId);
       w.el.classList.add("is-down");
-      ESA.Controls.fireAction(w.slot, w.action);
+      ESA.Controls.fireAction(w.slot, w.action, "touch");
     }, { passive: false });
     w.el.addEventListener("pointermove", function (e) {
       if (drag && drag.pid === e.pointerId) moveDrag(e);
@@ -827,7 +966,7 @@
   }
 
   function buildEditor() {
-    // Lives inside the control layer so it rotates with the play scene.
+    // Lives inside the control layer, above the play scene.
     edEl = document.createElement("div");
     edEl.id = "touchEditor";
     edEl.className = "te hidden";

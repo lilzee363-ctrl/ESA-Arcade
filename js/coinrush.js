@@ -6,6 +6,11 @@
 
    Normal token = +1. Rare bonus token = +3, distinguished only by the
    effects around it - the emblem artwork itself is never altered.
+
+   SOLO SCORE ATTACK (context.single): one player, no P2, same 60 seconds.
+   It gets mildly harder as the clock runs: fewer tokens on the floor at
+   once and they land further from you, so the run asks for more movement.
+   The run reports result.score; there is no winner.
    ========================================================================== */
 
 (function (ESA) {
@@ -23,6 +28,9 @@
   var MIN_FROM_TOKEN = 112;
   var BONUS_CHANCE = 0.14;
   var URGENT_AT = 10;
+  // Solo Score Attack ramp (start -> end of the run).
+  var SOLO_TOKENS = [7, 5];
+  var SOLO_MIN_FROM = [155, 245];
 
   /** Inset so a token is always fully reachable, never under the frame. */
   function spawnArea() {
@@ -40,9 +48,11 @@
     var who = ESA.describeMatchup(setup);
     this.timers = new ESA.TimerGroup();
     this.fx = new ESA.ParticleField(220);
+    this.single = !!(api && api.context && api.context.single) || who.single;
 
-    this.p1 = ESA.makePlayer(who.p1, 230, 370, { speed: PLAYER_SPEED, facing: "right" });
-    this.p2 = ESA.makePlayer(who.p2, W - 230, 370, { speed: PLAYER_SPEED, facing: "left" });
+    this.p1 = ESA.makePlayer(who.p1, this.single ? W / 2 : 230, 370, { speed: PLAYER_SPEED, facing: "right" });
+    this.p2 = this.single ? null : ESA.makePlayer(who.p2, W - 230, 370, { speed: PLAYER_SPEED, facing: "left" });
+    this.players = this.single ? [this.p1] : [this.p1, this.p2];
 
     this.score = { p1: 0, p2: 0 };
     this.timeLeft = MATCH_SECONDS;
@@ -70,9 +80,12 @@
     this.bonusActive = false;
     this.fx.clear();
 
-    this.p1.x = 230; this.p1.y = 370; this.p1.facing = "right";
-    this.p2.x = W - 230; this.p2.y = 370; this.p2.facing = "left";
-    this.p1.recoilX = this.p1.recoilY = this.p2.recoilX = this.p2.recoilY = 0;
+    this.p1.x = this.single ? W / 2 : 230; this.p1.y = 370; this.p1.facing = "right";
+    this.p1.recoilX = this.p1.recoilY = 0;
+    if (this.p2) {
+      this.p2.x = W - 230; this.p2.y = 370; this.p2.facing = "left";
+      this.p2.recoilX = this.p2.recoilY = 0;
+    }
 
     this.tokens = [];
     for (var i = 0; i < TOKEN_COUNT; i++) {
@@ -80,7 +93,7 @@
     }
 
     ESA.UI.setScore("p1", 0);
-    ESA.UI.setScore("p2", 0);
+    if (!this.single) ESA.UI.setScore("p2", 0);   // single: that panel shows the session best
     ESA.UI.setCenter("Time", MATCH_SECONDS, false);
 
     this.state = "countdown";
@@ -105,9 +118,19 @@
    * players and of every other live token. Falls back to the best-scoring
    * candidate so this can never loop forever or produce NaN.
    */
+  /** 0 at the start of the run, 1 at the end. */
+  CoinRush.prototype.progress = function () {
+    return ESA.clamp(1 - this.timeLeft / MATCH_SECONDS, 0, 1);
+  };
+
+  CoinRush.prototype.minFromPlayer = function () {
+    return this.single ? ESA.lerp(SOLO_MIN_FROM[0], SOLO_MIN_FROM[1], this.progress()) : MIN_FROM_PLAYER;
+  };
+
   CoinRush.prototype.findSpot = function () {
     var area = spawnArea();
     var best = null, bestScore = -1;
+    var minFrom = this.minFromPlayer();
 
     for (var attempt = 0; attempt < 40; attempt++) {
       var x = ESA.rand(area.left, area.right);
@@ -115,11 +138,11 @@
 
       // Distance to each player's body centre, so a token never spawns
       // inside someone's torso even though their feet are further away.
-      var c1 = ESA.bodyBounds(this.p1), c2 = ESA.bodyBounds(this.p2);
-      var dp = Math.min(
-        ESA.dist(x, y, c1.cx, c1.cy),
-        ESA.dist(x, y, c2.cx, c2.cy)
-      );
+      var dp = Infinity;
+      for (var k = 0; k < this.players.length; k++) {
+        var c = ESA.bodyBounds(this.players[k]);
+        dp = Math.min(dp, ESA.dist(x, y, c.cx, c.cy));
+      }
       var dt = Infinity;
       for (var i = 0; i < this.tokens.length; i++) {
         var t = this.tokens[i];
@@ -127,12 +150,12 @@
         dt = Math.min(dt, ESA.dist(x, y, t.x, t.y));
       }
 
-      if (dp >= MIN_FROM_PLAYER && dt >= MIN_FROM_TOKEN) {
+      if (dp >= minFrom && dt >= MIN_FROM_TOKEN) {
         return { x: x, y: y };
       }
 
       // Score candidates so the fallback is still a reasonable spot.
-      var score = Math.min(dp / MIN_FROM_PLAYER, 1) + Math.min(dt / MIN_FROM_TOKEN, 1);
+      var score = Math.min(dp / minFrom, 1) + Math.min(dt / MIN_FROM_TOKEN, 1);
       if (score > bestScore) { bestScore = score; best = { x: x, y: y }; }
     }
     return best || { x: (area.left + area.right) / 2, y: (area.top + area.bottom) / 2 };
@@ -210,11 +233,15 @@
 
     var canMove = (this.state === "playing");
     ESA.movePlayer(this.p1, dt, ESA.BOUNDS, canMove);
-    ESA.movePlayer(this.p2, dt, ESA.BOUNDS, canMove);
+    if (this.p2) ESA.movePlayer(this.p2, dt, ESA.BOUNDS, canMove);
 
     // Body boxes once per frame, after movement.
     var b1 = ESA.bodyBounds(this.p1);
-    var b2 = ESA.bodyBounds(this.p2);
+    var b2 = this.p2 ? ESA.bodyBounds(this.p2) : null;
+    // Solo ramp: fewer tokens on the floor as the run goes on.
+    var live = 0;
+    var cap = this.single ? Math.round(ESA.lerp(SOLO_TOKENS[0], SOLO_TOKENS[1], this.progress())) : Infinity;
+    for (var n = 0; n < this.tokens.length; n++) if (!this.tokens[n].collected) live++;
 
     // Tokens keep breathing during the countdown so the arena feels alive.
     for (var i = 0; i < this.tokens.length; i++) {
@@ -225,8 +252,9 @@
 
       if (t.collected) {
         t.respawnIn -= dt;
-        if (t.respawnIn <= 0 && this.state === "playing") {
+        if (t.respawnIn <= 0 && this.state === "playing" && live < cap) {
           this.tokens[i] = this.makeToken(true);
+          live++;
         }
         continue;
       }
@@ -239,7 +267,7 @@
       // collect() is idempotent.
       var r = tokenRadius(t);
       var hit1 = ESA.circleHitsRect(t.x, t.y, r, b1);
-      var hit2 = ESA.circleHitsRect(t.x, t.y, r, b2);
+      var hit2 = !!b2 && ESA.circleHitsRect(t.x, t.y, r, b2);
       if (hit1 || hit2) {
         var winner;
         if (hit1 && hit2) {
@@ -253,7 +281,7 @@
 
     if (this.state !== "playing") return;
 
-    ESA.separate(this.p1, this.p2, 50);
+    if (this.p2) ESA.separate(this.p1, this.p2, 50);
 
     /* --- Clock ------------------------------------------------------- */
     this.timeLeft -= dt;
@@ -272,6 +300,23 @@
   CoinRush.prototype.finish = function () {
     this.state = "matchEnd";              // freezes gameplay immediately
     ESA.UI.setCenter("Time", 0, false);
+
+    if (this.single) {
+      // Score Attack: one number, no winner. Solo turns it into RUN COMPLETE.
+      var sc = this.score.p1;
+      ESA.Audio.play("matchWin");
+      this.celebrate();
+      this.api.endMatch({
+        winner: null,
+        single: true,
+        score: sc,
+        kicker: "Time",
+        title: "Run Complete",
+        text: "Collected " + sc + (sc === 1 ? " point" : " points") + " in sixty seconds.",
+        scores: { p1: sc, p2: 0 }
+      });
+      return;
+    }
 
     var z = this.score.p1, s = this.score.p2;
     var winner = z === s ? null : (z > s ? this.p1 : this.p2);
@@ -339,9 +384,13 @@
       this.drawToken(ctx, this.tokens[i], now);
     }
 
-    var order = (this.p1.y <= this.p2.y) ? [this.p1, this.p2] : [this.p2, this.p1];
-    ESA.drawCharacter(ctx, order[0], now);
-    ESA.drawCharacter(ctx, order[1], now);
+    if (this.p2) {
+      var order = (this.p1.y <= this.p2.y) ? [this.p1, this.p2] : [this.p2, this.p1];
+      ESA.drawCharacter(ctx, order[0], now);
+      ESA.drawCharacter(ctx, order[1], now);
+    } else {
+      ESA.drawCharacter(ctx, this.p1, now);
+    }
 
     this.fx.draw(ctx);
   };
@@ -479,6 +528,16 @@
     accent: "#f3c35a",
     canTie: true,
     tournamentEligible: true,
+    // Solo: a one-player Score Attack run (no CPU, no difficulty).
+    soloEligible: true,
+    soloModeType: "score-attack",
+    solo: { mode: MATCH_SECONDS + " seconds",
+            blurb: "Sixty seconds. Grab every token you can.", touchBlurb: "Sixty seconds. Grab every token you can.",
+            description: "A solo run. ESA tokens drop across the arena - <b>run over them with W A S D</b>. " +
+                         "Normal tokens are worth 1, the rare glowing token is worth 3. The floor thins out and " +
+                         "tokens land further away as the clock runs down. Beat your session best.",
+            touchDescription: "A solo run. ESA tokens drop across the arena - <b>use the joystick to run over them</b>. " +
+                              "Gold tokens are worth 3. They get sparser as the clock runs down. Beat your session best." },
     enabled: true,
     create: function (api, setup) { return new CoinRush(api, setup); }
   });

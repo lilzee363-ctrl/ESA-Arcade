@@ -44,7 +44,8 @@
 
     /** Shared, cross-screen session data. */
     session: {
-      mode: null,                       // "casual" | "tournament"
+      mode: null,                       // "casual" | "solo" | "tournament"
+      solo: null,                       // Solo flow state (js/solo.js)
       setup: null,                      // casual { p1, p2 } PARTICIPANT ids
       libraryIndex: 0,
       tournament: null                  // ESA.Tournament while one is live
@@ -372,7 +373,7 @@
   /* ================================================================== *
    * Game run lifecycle
    * ================================================================== */
-  var Run = null;          // { token, def, setup, context, players, game, ended, paused, resultAt }
+  var Run = null;          // { token, def, setup, context, players, game, cpu, ended, paused, resultAt }
   var runToken = 0;
   var rafId = 0;
   var lastTime = 0;
@@ -387,7 +388,12 @@
     lastTime = now;
 
     // Hit-stop pauses simulation but keeps shake and rendering alive.
-    if (!ESA.Stage.isFrozen(now)) Run.game.update(dt, now);
+    if (!ESA.Stage.isFrozen(now)) {
+      // A CPU decides its stick/buttons first, exactly like a human's
+      // input arriving before the frame; the game then applies it.
+      if (Run.cpu) Run.cpu.update(dt, Run.game);
+      Run.game.update(dt, now);
+    }
     ESA.Stage.updateFX(dt);
     if (ESA.Touch) ESA.Touch.sync(Run.game);
 
@@ -412,6 +418,9 @@
     if (Run && Run.game) {
       try { Run.game.destroy(); } catch (e) { console.error("[ESA] destroy failed:", e); }
     }
+    if (Run && Run.cpu) Run.cpu.destroy();
+    ESA.Controls.release();                 // every slot back to the human sources
+    ESA.Controls.setKeyboardAlias(false);
     Run = null;
     if (ESA.Touch) ESA.Touch.unmount();     // pointers, overlays, pre-roll, editor
     ESA.UI.clearAll();
@@ -428,8 +437,11 @@
     ESA.Input.clear();
 
     var out;
+    if (Run.cpu) Run.cpu.reset();
     if (Run.context.mode === "tournament" && ESA.TournamentUI) {
       out = ESA.TournamentUI.onMatchEnd(Run, result);
+    } else if (Run.context.mode === "solo" && ESA.Solo) {
+      out = ESA.Solo.onMatchEnd(Run, result);
     } else {
       out = { result: result, actions: casualResultActions() };
     }
@@ -453,10 +465,11 @@
     stopLoop();
     ESA.Input.clear();
     if (ESA.Touch) ESA.Touch.releaseAll();
+    if (Run.cpu) Run.cpu.reset();               // stick centred, plan dropped
     playEl.classList.add("is-paused");
     ESA.Audio.play("pause");
-    Modal.push(Run.context.mode === "tournament" && ESA.TournamentUI
-      ? ESA.TournamentUI.pauseMenu(Run)
+    Modal.push(Run.context.mode === "tournament" && ESA.TournamentUI ? ESA.TournamentUI.pauseMenu(Run)
+      : Run.context.mode === "solo" && ESA.Solo ? ESA.Solo.pauseMenu(Run)
       : casualPauseMenu());
   }
 
@@ -541,7 +554,9 @@
 
     /**
      * params: { def: game registry entry, setup: { p1, p2 },
-     *           context: { mode: "casual" } | { mode: "tournament", matchId, tag } }
+     *           context: { mode: "casual" } | { mode: "tournament", matchId, tag }
+     *                  | { mode: "solo", matchId, difficulty, cpuSlot, slotTags, hudKeys, tag }
+     *                  | { mode: "solo", single: true, matchId, hudKeys, tag }  (Score Attack) }
      */
     enter: function (p, prevName) {
       teardownRun();
@@ -550,6 +565,7 @@
       // Build Evil / Guest sprite caches now, behind the veil - never on
       // the first gameplay frame.
       if (ESA.Variants) ESA.SLOTS.forEach(function (s) { ESA.Variants.warm(players[s].character); });
+      var single = !!(p.context && p.context.single);
       Run = {
         token: ++runToken,
         def: def,
@@ -557,6 +573,7 @@
         context: p.context || { mode: "casual" },
         players: players,
         game: null,
+        cpu: null,
         ended: false,
         paused: false,
         resultAt: 0,
@@ -568,12 +585,17 @@
       var view = ESA.Games.resolve(def, Run.context);
       ESA.UI.configure({
         title: def.title,
-        mode: view.mode,
+        mode: (single && def.solo && def.solo.mode) || view.mode,
         centerLabel: view.hud.centerLabel,
         centerValue: view.hud.centerValue,
         pips: view.hud.pips,
         players: players,
-        scheme: def.controls
+        scheme: def.controls,
+        keys: Run.context.hudKeys || null,      // Solo: "YOU · ..." / "CPU · HARD"
+        // Score Attack: one player; the right panel shows the session best.
+        single: single,
+        best: single && ESA.SoloStats ? ESA.SoloStats.best(def.id) : null,
+        bestLabel: single ? "Score Attack" : ""
       });
 
       var tag = ESA.byId("playTag");
@@ -586,14 +608,19 @@
       if (!Run || Run.game) return;
       ESA.Stage.resize();
       var token = Run.token;
+      // Touch: the how-to card on arrival from a menu (shown inside the
+      // landscape game shell, whichever way the phone is held).
       if (ESA.Touch && ESA.Touch.active && Run.preroll) {
         ESA.Touch.preroll(Run.def, {
           timers: App.timers,
+          layout: touchLayout(),
           onPlay: function () { if (Run && Run.token === token) beginRun(); },
           onBack: function () {
             if (!Run || Run.token !== token) return;
             ESA.Audio.play("uiBack");
-            App.go(Run.context.mode === "tournament" ? "hub" : "library");
+            var mode = Run.context.mode;
+            App.go(mode === "tournament" ? "hub"
+              : mode === "solo" ? (Run.context.single ? "soloGames" : "soloDifficulty") : "library");
           }
         });
         return;
@@ -609,7 +636,7 @@
         // The match is over: Esc takes the "leave" option, never a rematch.
         if (performance.now() - Run.resultAt < 450) return;
         if (Run.context.mode === "tournament") ESA.UI.triggerDefaultResult();
-        else { ESA.Audio.play("uiBack"); App.go("library"); }
+        else { ESA.Audio.play("uiBack"); App.go(Run.context.mode === "solo" ? "soloGames" : "library"); }
         return;
       }
       pause();
@@ -627,6 +654,11 @@
     }
   });
 
+  /** One human on the device (Solo): one control set, no dead P2 widgets. */
+  function touchLayout() {
+    return Run && Run.context.mode === "solo" ? "solo" : "duo";
+  }
+
   /** Creates the game instance and starts the one loop. */
   function beginRun() {
     if (!Run || Run.game) return;
@@ -642,10 +674,18 @@
       Run.game = null;
       return;
     }
+    // Solo: the CPU becomes the control source for its slot. The game is
+    // not told - it keeps reading ESA.Controls like it always does.
+    // Solo: one human on the keyboard - arrows / Enter work for them too.
+    ESA.Controls.setKeyboardAlias(Run.context.mode === "solo");
+    if (Run.context.mode === "solo" && Run.context.cpuSlot && ESA.CPU) {
+      Run.cpu = ESA.CPU.attach(Run.def.id, Run.context.cpuSlot, Run.context.difficulty);
+      if (!Run.cpu) console.warn("[ESA] No CPU strategy for", Run.def.id);
+    }
     if (ESA.Touch) {
       var g = Run.game;
       ESA.Touch.mount(Run.def, {
-        layout: "duo",
+        layout: touchLayout(),
         onTap: typeof g.onTap === "function"
           ? function (x, y, pid) { if (Run && Run.game === g && !Run.paused && !Run.ended) g.onTap(x, y, pid); }
           : null
@@ -657,9 +697,18 @@
   /** Launches a match through the play screen. */
   App.startMatch = function (def, setup, context) {
     if (!def || !setup) return false;
+    context = context || { mode: "casual" };
+    // Every Solo start (first match, rematch, restart) is a NEW match with
+    // its own id, so Session Stats can record each result exactly once.
+    if (context.mode === "solo" && ESA.SoloStats) {
+      var fresh = {};
+      for (var k in context) fresh[k] = context[k];
+      fresh.matchId = ESA.SoloStats.newMatchId();
+      context = fresh;
+    }
     ESA.Audio.unlock();
     ESA.Audio.play("start");
-    return App.go("play", { def: def, setup: setup, context: context || { mode: "casual" } });
+    return App.go("play", { def: def, setup: setup, context: context });
   };
 
   App.pause = pause;

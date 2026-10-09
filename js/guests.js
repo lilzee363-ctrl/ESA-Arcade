@@ -608,6 +608,13 @@
       rows.appendChild(chipRow(card, "Extra", EXTRAS, "accessory"));
       layout.appendChild(rows);
       card.appendChild(layout);
+      // Phones: the preview shrinks once the options scroll (more room for
+      // them), and grows back at the top. The listener lives on this
+      // render's own element, so it goes away with it.
+      rows.addEventListener("scroll", function () {
+        var on = card.classList.contains("is-scrolled") ? rows.scrollTop > 4 : rows.scrollTop > 24;
+        card.classList.toggle("is-scrolled", on);
+      }, { passive: true });
 
       var foot = el("div", "gc-foot");
       foot.appendChild(button("← Back", "btn-ghost btn-small", function () { go("name"); }));

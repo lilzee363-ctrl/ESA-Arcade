@@ -16,6 +16,16 @@
   var PLAYER_SPEED = 180;        // was 235 in V1 - deliberately slower
   var TRANSFER_DIST = 76;        // centre-to-centre contact distance
   var TRANSFER_COOLDOWN = 0.9;   // immunity so the bomb cannot ping-pong
+  /*
+   * The hand-off shove. It used to be 260 px/s (faster than walking) with
+   * the shared slow fade, which took the stick away for ~0.33 s after
+   * every pass (~50 px of forced slide) - exactly when players want to
+   * juke. Now a shorter, snappier shove: each player still clears ~24 px
+   * (plus the cooldown above), and steering is back within ~0.17 s.
+   * Speed, transfer distance and cooldown are unchanged.
+   */
+  var PASS_SHOVE = 200;
+  var PASS_SHOVE_DECAY = 0.0002;
   var ROUND_START_COOLDOWN = 1.1;
   var FUSE_MIN = 10, FUSE_MAX = 18;
 
@@ -25,8 +35,8 @@
     this.timers = new ESA.TimerGroup();
     this.fx = new ESA.ParticleField(200);
 
-    this.p1 = ESA.makePlayer(who.p1, 250, 370, { speed: PLAYER_SPEED, facing: "right" });
-    this.p2 = ESA.makePlayer(who.p2, W - 250, 370, { speed: PLAYER_SPEED, facing: "left" });
+    this.p1 = ESA.makePlayer(who.p1, 250, 370, { speed: PLAYER_SPEED, facing: "right", recoilDecay: PASS_SHOVE_DECAY });
+    this.p2 = ESA.makePlayer(who.p2, W - 250, 370, { speed: PLAYER_SPEED, facing: "left", recoilDecay: PASS_SHOVE_DECAY });
 
     this.wins = { p1: 0, p2: 0 };
     this.round = 1;
@@ -160,8 +170,8 @@
     // Shove both players apart so they are not instantly back in contact.
     var dx = (this.p2.x - this.p1.x) / Math.max(d, 1);
     var dy = (this.p2.y - this.p1.y) / Math.max(d, 1);
-    this.p1.recoilX = -dx * 260; this.p1.recoilY = -dy * 260;
-    this.p2.recoilX = dx * 260;  this.p2.recoilY = dy * 260;
+    this.p1.recoilX = -dx * PASS_SHOVE; this.p1.recoilY = -dy * PASS_SHOVE;
+    this.p2.recoilX = dx * PASS_SHOVE;  this.p2.recoilY = dy * PASS_SHOVE;
 
     var mx = (this.p1.x + this.p2.x) / 2;
     var my = (this.p1.y + this.p2.y) / 2 - 70;
@@ -266,6 +276,27 @@
         gravity: 110, drag: 0.985, vrot: ESA.rand(-7, 7)
       });
     }
+  };
+
+  /**
+   * What a player can SEE, for a CPU strategy (js/cpu-bombpass.js). Fills a
+   * caller-owned object (no per-frame allocation). Who holds the bomb and
+   * the PASS COOLDOWN pill are on screen; the fuse time is NOT - only how
+   * hard it fizzes (tension), which everyone can see and hear.
+   */
+  BombPass.prototype.observe = function (slot, v) {
+    var me = this[slot], op = this[slot === "p1" ? "p2" : "p1"];
+    if (!me) return v;
+    v.bounds = ESA.BOUNDS;
+    v.live = this.state === "playing";
+    v.speed = PLAYER_SPEED;
+    v.transferDist = TRANSFER_DIST;
+    v.meX = me.x; v.meY = me.y;
+    v.opX = op.x; v.opY = op.y;
+    v.iHold = this.holder === me;
+    v.cooldown = this.showCooldown ? Math.max(0, this.passCooldown) : 0;
+    v.tension = this.tension();
+    return v;
   };
 
   /* ------------------------------------------------------------------ *
@@ -451,6 +482,12 @@
     accent: "#e8584f",
     canTie: false,
     tournamentEligible: true,
+    // Solo vs CPU: same rules, first to 3 (strategy in js/cpu-bombpass.js).
+    soloEligible: true,
+    soloModeType: "cpu-versus",
+    solo: { blurb: "First to 3 rounds vs the CPU. Tag it, or run.", touchBlurb: "First to 3 rounds vs the CPU. Tag it, or run.",
+            description: "One of you is holding a live bomb. <b>Touch the CPU to pass it</b> - no button, just get close. " +
+                         "Move with <b>W A S D</b>. The fuse is hidden, so nobody knows when it blows. Don't be the one holding it." },
     enabled: true,
     create: function (api, setup) { return new BombPass(api, setup); }
   });

@@ -1491,3 +1491,106 @@ body.is-gameplay #mascot { display: none !important; }
 }
 /* Headroom so the P1 / P2 cursor badges never touch the title. */
 .cs-roster { padding-top: 10px; }
+
+/* --------------------------------------------------------------------------
+   Mirror safety (presentation only). Side-flipped art (P2 select panel,
+   VS P2, the Final's right side) is NOT flipped when the character's art
+   carries readable text / numbers / logos - see mirrorSafe in
+   js/characters.js. Entrance animations use `translate`, so they still run.
+   -------------------------------------------------------------------------- */
+.art-frame.no-mirror.no-mirror.no-mirror { transform: none; }   /* outranks every side-flip rule */
+
+/* --------------------------------------------------------------------------
+   VS - plate structure (all sizes): [badge row] + name. The badge row is
+   the slot tag (P1 / P2 / YOU) or, for a Solo CPU, the "CPU · HARD" chip.
+   -------------------------------------------------------------------------- */
+.vs-tags { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+/* Long names (Evil variants, Guests) step down so they stay inside their half. */
+.vs-name.is-long { font-size: clamp(30px, 4.4vw, 60px); }
+/* Desktop halves are diagonal: centre each plate in the part you can see. */
+.vs-half.p1 .vs-plate { margin-right: 12%; max-width: 84%; }
+.vs-half.p2 .vs-plate { margin-left: 12%; max-width: 84%; }
+.vs-name.is-xlong { font-size: clamp(26px, 3.9vw, 52px); }
+
+/* --------------------------------------------------------------------------
+   VS on phones / narrow portrait: two STRICT, bounded halves. Each half is
+   exactly 50% wide and clips its own content; the plate stacks
+   (badge -> EVIL badge -> name) and wraps inside its half, so nothing can
+   cross into the opponent's side, clip off-screen or meet the BACK /
+   volume bar (top padding reserves it, bottom padding the home bar).
+   Sprites are capped to their own box: comparable presence, presentation
+   only (colliders / hitboxes are untouched).
+   -------------------------------------------------------------------------- */
+@media (orientation: portrait), (max-width: 760px) {
+  .vs-half {
+    width: 50%;
+    clip-path: none;
+    justify-content: center;
+    gap: 10px;
+    padding: calc(var(--sa-t, 0px) + 76px) 10px calc(var(--sa-b, 0px) + 30px);
+  }
+  /* The desktop gradients fade to black at the inner edge (hidden there
+     by the diagonal overlap); bounded halves fade downward instead. */
+  .vs-half.p1 {
+    clip-path: none;
+    box-shadow: inset -1px 0 0 rgba(243, 195, 90, .35);
+    background:
+      repeating-linear-gradient(115deg, rgba(255, 255, 255, .04) 0 2px, transparent 2px 14px),
+      linear-gradient(180deg, color-mix(in srgb, var(--cc) 55%, #030b16), #030b16 92%);
+  }
+  .vs-half.p2 {
+    clip-path: none;
+    background:
+      repeating-linear-gradient(65deg, rgba(255, 255, 255, .04) 0 2px, transparent 2px 14px),
+      linear-gradient(180deg, color-mix(in srgb, var(--cc) 55%, #030b16), #030b16 92%);
+  }
+  .vs-name.is-long { font-size: clamp(15px, 5vw, 26px); }
+  .vs-name.is-xlong { font-size: clamp(14px, 4.3vw, 22px); overflow-wrap: break-word; }
+  .vs-art-wrap { flex: none; height: min(44vh, 80vw); width: 100%; }
+  .vs-art.art-frame { --cap-h: 100cqh; --cap-w: 96cqw; }
+  .vs-art { max-width: 100%; }
+  .vs-half.p1 .vs-plate, .vs-half.p2 .vs-plate { margin-left: 0; margin-right: 0; max-width: 100%; }
+  .vs-plate {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 4px;
+    text-align: center;
+  }
+  .vs-tags { flex-wrap: wrap; justify-content: center; max-width: 100%; }
+  .vs-slot { font-size: 13px; padding: 2px 9px; letter-spacing: .14em; }
+  .vs-screen.is-solo .vs-plate .so-cpu-chip { font-size: 11px; letter-spacing: .12em; padding: 3px 8px; }
+  .vs-name {
+    max-width: 100%;
+    font-size: clamp(17px, 6vw, 30px);
+    letter-spacing: .06em;
+    line-height: 1.05;
+    overflow-wrap: break-word;
+    text-shadow: 0 3px 0 rgba(3, 11, 22, .8);
+  }
+  /* EVIL is a compact badge above the name, not a giant word beside it. */
+  .vs-name .evil-name { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .vs-name .evil-word {
+    font-size: 10px;
+    letter-spacing: .24em;
+    line-height: 1.4;
+    padding: 1px 8px;
+    border-radius: 6px;
+    background: rgba(226, 26, 62, .22);
+    border: 1px solid rgba(255, 90, 110, .6);
+  }
+  .vs-center { top: calc(var(--sa-t, 0px) + 76px + min(22vh, 40vw)); }
+  .vs-word { font-size: clamp(48px, 16vw, 84px); }
+  .vs-emblem { width: clamp(84px, 24vw, 130px); }
+}
+/* Phones in landscape (short): smaller plate, sprites capped by height. */
+@media (max-height: 560px) and (orientation: landscape) {
+  .vs-half { padding-bottom: calc(var(--sa-b, 0px) + 18px); }
+  .vs-art.art-frame { --cap-h: min(100cqh, 60vh); }
+  .vs-plate { flex-wrap: wrap; justify-content: center; gap: 4px 10px; max-width: 80%; }
+  .vs-name { font-size: clamp(20px, 4.2vw, 40px); overflow-wrap: anywhere; }
+  .vs-name .evil-word { font-size: .5em; letter-spacing: .2em; vertical-align: middle; }
+  .vs-word { font-size: clamp(64px, 12vw, 120px); }
+}

@@ -526,35 +526,61 @@ body.is-touch .ps-chip { height: 38px; }
 /* Phones: chips scroll sideways in one row instead of stacking up. */
 body.is-touch .ps-picked { flex-wrap: nowrap; max-height: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
 
+/*
+ * Phones: the Customize sheet is three fixed regions and nothing overlaps:
+ *   TOP     guest preview + nickname (shrinks once the options scroll)
+ *   MIDDLE  the options - the ONLY scrolling part, bounded by the regions
+ *           above and below, so no row can ever sit under the buttons
+ *   BOTTOM  one solid action tray: BACK · RANDOMIZE · ADD GUEST, padded
+ *           for the home indicator (safe-area inset)
+ */
 @media (max-width: 720px) {
   .modal-card.guest-creator { padding: 14px 14px 12px; gap: 10px; }
+  .modal-card.guest-creator[data-step="custom"] {
+    height: calc(var(--view-h, 100vh) - var(--sa-t, 0px) - var(--sa-b, 0px) - 20px);
+    overflow: hidden;
+    padding: 12px 12px 0;
+    gap: 8px;
+  }
   .gc-layout { grid-template-columns: 1fr; gap: 10px; }
+  .gc-layout:not(.is-random) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; gap: 8px; }
   .gc-layout:not(.is-random) .gc-preview {
-    position: sticky;
-    top: -14px;
-    z-index: 2;
+    flex: none;
     flex-direction: row;
     justify-content: center;
     gap: 14px;
-    margin: -4px -14px 0;
-    padding: 8px 14px;
+    padding: 6px 12px;
+    border-radius: 14px;
     background: linear-gradient(180deg, #0d2f52, #071a30);
-    border-bottom: 1px solid rgba(243, 195, 90, .25);
+    border: 1px solid rgba(243, 195, 90, .25);
   }
-  .gc-layout:not(.is-random) .gc-stage { width: 118px; height: 160px; padding-bottom: 6px; }
-  .gc-layout:not(.is-random) .gc-plate { text-align: left; }
-  .gc-layout:not(.is-random) .gc-plate b { max-width: 46vw; font-size: 20px; }
-  .gc-rows { max-height: none; overflow: visible; padding: 0; }
+  .gc-layout:not(.is-random) .gc-stage { width: 104px; height: 140px; padding-bottom: 6px; transition: width .2s var(--ease-out), height .2s var(--ease-out); }
+  .guest-creator.is-scrolled .gc-layout:not(.is-random) .gc-stage { width: 62px; height: 84px; padding-bottom: 3px; }
+  .guest-creator.is-scrolled .gc-ouch { display: none; }
+  .gc-layout:not(.is-random) .gc-plate { text-align: left; min-width: 0; }
+  .gc-layout:not(.is-random) .gc-plate b { max-width: 52vw; font-size: 20px; }
+  .gc-layout:not(.is-random) .gc-rows {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    padding: 2px 2px 14px;
+    -webkit-overflow-scrolling: touch;
+  }
   .gc-foot {
-    position: sticky;
-    bottom: -12px;
-    z-index: 2;
-    margin: 0 -14px -12px;
-    padding: 10px 14px calc(12px + var(--sa-b, 0px));
-    background: linear-gradient(180deg, rgba(4, 13, 25, 0), #040d19 28%);
+    flex: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.35fr;
+    gap: 8px;
+    margin: 0 -12px;
+    padding: 10px 12px calc(10px + var(--sa-b, 0px));
+    background: #040d19;
+    border-top: 1px solid rgba(243, 195, 90, .3);
+    border-radius: 0 0 16px 16px;
   }
-  .gc-foot .btn { flex: 1 1 auto; }
-  .gc-foot .is-primary { flex-basis: 100%; min-width: 0; order: -1; }
+  .gc-foot .btn { min-width: 0; min-height: 46px; padding: 0 8px; font-size: 13px; letter-spacing: .06em; white-space: nowrap; }
+  .gc-foot .is-primary { min-width: 0; }
+  .modal-card.guest-creator[data-step="random"] .gc-foot { margin: 0 -14px -12px; }
   .gc-choices { grid-template-columns: 1fr; }
   .vsh-art { height: clamp(140px, 28vh, 220px); }
   .vsh-name { font-size: 15px; letter-spacing: .1em; }

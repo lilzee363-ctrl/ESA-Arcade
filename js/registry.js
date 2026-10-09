@@ -48,6 +48,19 @@
      *   accent              CSS colour for the cabinet theme
      *   canTie              true if the game can end level
      *   tournamentEligible  enters the Tournament game draw
+     *   soloEligible        playable in SOLO (one human on the device)
+     *   soloModeType        how Solo plays it:
+     *                         "cpu-versus"    human (P1) vs a CPU (P2). Needs a
+     *                                         CPU strategy registered with
+     *                                         ESA.CPU.registerStrategy (js/cpu.js).
+     *                                         Easy / Normal / Hard; results go
+     *                                         into the VERSUS record.
+     *                         "score-attack"  one human, no CPU, no difficulty.
+     *                                         The game reads context.single and
+     *                                         reports result.score (a number);
+     *                                         results go into SCORE ATTACK.
+     *   solo                optional { blurb, touchBlurb, description,
+     *                       touchDescription, mode } - Solo wording
      *   enabled             false hides it everywhere
      *   powerUps            optional { enabled, types: [...] } - opts into the
      *                       shared power-up system (js/powerups.js). Omit
@@ -79,6 +92,15 @@
         accent: def.accent || "#f3c35a",
         canTie: !!def.canTie,
         tournamentEligible: def.tournamentEligible !== false,
+        soloEligible: def.soloEligible === true,
+        soloModeType: def.soloModeType === "score-attack" ? "score-attack" : "cpu-versus",
+        solo: {
+          blurb: (def.solo && def.solo.blurb) || "",
+          touchBlurb: (def.solo && def.solo.touchBlurb) || "",
+          description: (def.solo && def.solo.description) || "",          // desktop briefing text in Solo
+          touchDescription: (def.solo && def.solo.touchDescription) || "",
+          mode: (def.solo && def.solo.mode) || ""                          // Solo format label
+        },
         enabled: def.enabled !== false,
         powerUps: (def.powerUps && def.powerUps.enabled)
           ? { enabled: true, types: (def.powerUps.types || []).slice() }
@@ -111,6 +133,20 @@
     tournamentPool: function () {
       return games.filter(function (g) { return g.enabled && g.tournamentEligible; });
     },
+
+    /**
+     * Games playable in Solo. A CPU-versus game must also have a registered
+     * CPU strategy, so the flag alone can never fake a CPU; a Score Attack
+     * game needs nothing more.
+     */
+    soloPool: function () {
+      return games.filter(function (g) {
+        if (!g.enabled || !g.soloEligible) return false;
+        return g.soloModeType === "score-attack" || !!(ESA.CPU && ESA.CPU.hasStrategy(g.id));
+      });
+    },
+
+    isScoreAttack: function (g) { return !!g && g.soloModeType === "score-attack"; },
 
     /** Markup for a game's icon - used by library cards, intro and draw. */
     iconHTML: function (g) {

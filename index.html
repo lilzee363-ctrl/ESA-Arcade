@@ -4,13 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>ESA Arcade</title>
-  <meta name="description" content="ESA Arcade - a two-player party game collection and tournament for the Egyptian Students Association." />
+  <meta name="description" content="ESA Arcade - a party game collection with Casual, Solo vs CPU and Tournament modes for the Egyptian Students Association." />
   <link rel="icon" href="assets/Branding/Golden Canadian Pharaoh Emblem.png" />
   <link rel="stylesheet" href="css/tokens.css" />
   <link rel="stylesheet" href="css/arcade.css" />
   <link rel="stylesheet" href="css/menus.css" />
   <link rel="stylesheet" href="css/tournament.css" />
   <link rel="stylesheet" href="css/participants.css" />
+  <link rel="stylesheet" href="css/solo.css" />
   <link rel="stylesheet" href="css/touch.css" />
 </head>
 <body>
@@ -23,6 +24,17 @@
     <div class="amb-glow"></div>
     <div class="amb-floor"><div class="amb-grid"></div></div>
     <div class="amb-sweep"></div>
+    <!-- V4 ambience: a faint breathing ESA emblem, twinkling stars, and
+         rare attract-mode moments (glint / scan / emblem pulse). -->
+    <div class="amb-emblem"><img src="assets/Branding/Golden Canadian Pharaoh Emblem.png" alt="" draggable="false" /></div>
+    <div class="amb-stars">
+      <i style="--x:8%;--y:14%;--d:0s"></i><i style="--x:21%;--y:31%;--d:1.7s"></i><i style="--x:34%;--y:9%;--d:3.1s"></i>
+      <i style="--x:47%;--y:22%;--d:.9s"></i><i style="--x:61%;--y:12%;--d:2.4s"></i><i style="--x:73%;--y:28%;--d:4.2s"></i>
+      <i style="--x:86%;--y:16%;--d:1.2s"></i><i style="--x:93%;--y:38%;--d:3.6s"></i><i style="--x:14%;--y:46%;--d:2.9s"></i>
+      <i style="--x:80%;--y:50%;--d:.4s"></i><i style="--x:56%;--y:40%;--d:5s"></i><i style="--x:28%;--y:58%;--d:4.6s"></i>
+    </div>
+    <div class="amb-glint"></div>
+    <div class="amb-scan"></div>
     <div class="amb-dust" id="ambDust"></div>
     <div class="amb-vignette"></div>
   </div>
@@ -101,6 +113,18 @@
         <path d="M44 50l12 0" stroke="#f3c35a" stroke-width="5" stroke-linecap="round"/>
       </symbol>
 
+      <!-- One player vs the CPU -->
+      <symbol id="icoSolo" viewBox="0 0 100 100">
+        <circle cx="28" cy="36" r="13" fill="#4aa3ff"/>
+        <path d="M8 80a20 20 0 0 1 40 0z" fill="#4aa3ff"/>
+        <rect x="56" y="30" width="34" height="34" rx="6" fill="#111c2c" stroke="#f3c35a" stroke-width="3"/>
+        <path d="M62 30v-7M73 30v-7M84 30v-7M62 64v7M73 64v7M84 64v7M56 37h-6M56 47h-6M56 57h-6M90 37h6M90 47h6M90 57h6" stroke="#c0871f" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="66" cy="44" r="3.6" fill="#ff5468"/>
+        <circle cx="80" cy="44" r="3.6" fill="#ff5468"/>
+        <path d="M65 54h16" stroke="#f3c35a" stroke-width="3" stroke-linecap="round"/>
+        <path d="M44 50h8" stroke="#f3c35a" stroke-width="4" stroke-linecap="round"/>
+      </symbol>
+
       <!-- Bracket -->
       <symbol id="icoBracket" viewBox="0 0 100 100">
         <g fill="none" stroke="#f3c35a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
@@ -135,7 +159,7 @@
       <div class="welcome-foot">
         <span class="wf-credit">Credit 00 &middot; Free Play</span>
         <span class="wf-ticker" id="welcomeTicker" data-touch-text="Two players · One screen · Extremely serious competition">Two players &middot; One keyboard &middot; Extremely serious competition</span>
-        <span class="wf-ver">V3</span>
+        <span class="wf-ver">V4</span>
       </div>
     </section>
 
@@ -157,6 +181,16 @@
               <span>Quick local matches</span>
               <span>Choose 2 fighters &middot; Normal, Evil or Guest</span>
               <span>Play any machine</span>
+            </span>
+            <span class="mc-cta" data-touch-text="▶ Tap to choose">&#9654; Press Enter</span>
+          </button>
+          <button class="mode-card" data-mode="solo" type="button">
+            <span class="mc-marquee"><span class="mc-bulbs"></span><span class="mc-title">Solo</span></span>
+            <span class="mc-screen"><svg viewBox="0 0 100 100"><use href="#icoSolo" /></svg></span>
+            <span class="mc-lines">
+              <span>Battle CPUs or chase high scores</span>
+              <span>VS CPU &middot; Easy, Normal or Hard</span>
+              <span>Score Attack &middot; beat your best</span>
             </span>
             <span class="mc-cta" data-touch-text="▶ Tap to choose">&#9654; Press Enter</span>
           </button>
@@ -195,6 +229,85 @@
         </div>
         <p class="nav-hint" id="csHint"><b>Mouse:</b> click a fighter, then <b>Confirm</b> &middot; P1 first, then P2 &middot; <b>Esc</b> back</p>
         <p class="touch-hint touch-only" id="csTouchHint">Tap a fighter for <b class="t-p1">P1</b>, then one for <b class="t-p2">P2</b></p>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         SOLO - CHOOSE YOUR FIGHTER
+         ================================================================== -->
+    <section id="soloSelectScreen" class="screen has-topbar" aria-label="Solo character select">
+      <div class="cs-inner so-inner">
+        <header class="screen-head">
+          <span class="px-arrow left" aria-hidden="true"></span>
+          <h2 class="screen-title">Solo &middot; Your Fighter</h2>
+          <span class="px-arrow right" aria-hidden="true"></span>
+        </header>
+        <div class="so-statsrow">
+          <div class="so-record" id="soSelectRecord"></div>
+          <button class="btn btn-ghost btn-small so-stats-btn" id="soSelectStatsBtn" type="button">Session Stats <span class="kbd-hint">T</span></button>
+        </div>
+        <div class="so-stage">
+          <div class="cs-side so-side" id="soSide" data-slot="p1"></div>
+          <div class="cs-roster-wrap">
+            <div class="cs-roster" id="soRoster"></div>
+          </div>
+        </div>
+        <p class="nav-hint"><b>W A S D</b> / <b>Arrows</b> move &middot; <b>Space</b> select, then confirm &middot; <b>W S</b> normal / evil &middot; <b>T</b> stats &middot; <b>Esc</b> back</p>
+        <p class="touch-hint touch-only" id="soTouchHint">Tap a fighter</p>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         SOLO - CHOOSE A GAME
+         ================================================================== -->
+    <section id="soloGamesScreen" class="screen has-topbar" aria-label="Solo game select">
+      <div class="so-inner so-games-inner">
+        <header class="screen-head">
+          <span class="px-arrow left" aria-hidden="true"></span>
+          <h2 class="screen-title">Choose Your Game</h2>
+          <span class="px-arrow right" aria-hidden="true"></span>
+        </header>
+        <div class="so-top">
+          <div class="so-me-wrap" id="soGamesMe"></div>
+          <div class="so-record" id="soGamesRecord"></div>
+        </div>
+        <div class="so-game-grid" id="soGameGrid"></div>
+        <div class="so-foot">
+          <button class="btn btn-ghost so-stats-btn" id="soGamesStatsBtn" type="button">Session Stats <span class="kbd-hint">T</span></button>
+        </div>
+        <p class="nav-hint"><b>&larr; &rarr;</b> choose &middot; <b>Enter</b> play &middot; <b>C</b> change fighter &middot; <b>T</b> stats &middot; <b>Esc</b> back</p>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         SOLO - CPU DIFFICULTY
+         ================================================================== -->
+    <section id="soloDiffScreen" class="screen has-topbar" aria-label="CPU difficulty">
+      <div class="so-inner so-diff-inner">
+        <div class="so-top">
+          <div class="so-me-wrap" id="soDiffMe"></div>
+          <div class="so-diff-game"><small>Game</small><b id="soDiffGame">Air Hockey</b></div>
+        </div>
+        <header class="screen-head">
+          <span class="px-arrow left" aria-hidden="true"></span>
+          <h2 class="screen-title">CPU Difficulty</h2>
+          <span class="px-arrow right" aria-hidden="true"></span>
+        </header>
+        <div class="so-diff-grid" id="soDiffGrid"></div>
+        <p class="nav-hint"><b>&larr; &rarr;</b> choose &middot; <b>Enter</b> fight &middot; <b>Esc</b> back</p>
+      </div>
+    </section>
+
+    <!-- ==================================================================
+         SOLO - SESSION STATS
+         ================================================================== -->
+    <section id="soloStatsScreen" class="screen has-topbar" aria-label="Session stats">
+      <div class="so-inner ss-inner">
+        <div class="ss-kicker">This Session</div>
+        <h2 class="ss-title">Session Stats</h2>
+        <div class="ss-body" id="ssBody"></div>
+        <p class="ss-note">Solo results from this browser tab only &middot; finished matches count, quits don&rsquo;t.</p>
+        <button class="btn btn-gold" id="ssBackBtn" type="button">Back <span class="kbd-hint">Enter</span></button>
       </div>
     </section>
 
@@ -318,6 +431,7 @@
                 <span class="sc" id="resultScoreP2">0</span>
               </div>
               <p class="result-text" id="resultText"></p>
+              <div class="result-extra hidden" id="resultExtra"></div>
               <div class="result-actions" id="resultActions"></div>
             </div>
           </div>
@@ -545,10 +659,15 @@
   <script src="js/status-effects.js"></script>
   <script src="js/powerups.js"></script>
   <script src="js/airhockey.js"></script>
+  <script src="js/cpu.js"></script>
+  <script src="js/cpu-airhockey.js"></script>
+  <script src="js/cpu-bombpass.js"></script>
+  <script src="js/solo-stats.js"></script>
   <script src="js/tournament.js"></script>
   <script src="js/app.js"></script>
   <script src="js/menus.js"></script>
   <script src="js/tournament-ui.js"></script>
+  <script src="js/solo.js"></script>
   <script src="js/attract.js"></script>
   <script src="js/touch.js"></script>
   <script src="js/main.js"></script>

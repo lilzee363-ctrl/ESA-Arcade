@@ -104,13 +104,80 @@
    * MODE SELECT
    * ================================================================== */
   var modeState = { focus: 0, choosing: false, cards: [] };
-  var MODES = ["casual", "tournament"];
+  var MODES = ["casual", "solo", "tournament"];
+  var MODE_SCREEN = { casual: "charSelect", solo: "soloSelect", tournament: "participants" };
 
   function focusMode(i, silent) {
-    modeState.focus = (i + MODES.length) % MODES.length;
+    var next = (i + MODES.length) % MODES.length;
+    if (next === modeState.focus && modeState.cards[next] && modeState.cards[next].classList.contains("is-focus")) return;
+    modeState.focus = next;
     modeState.cards.forEach(function (c, n) { c.classList.toggle("is-focus", n === modeState.focus); });
     if (!silent) ESA.Audio.play("uiMove");
   }
+
+  /*
+   * SCROLL FOCUS (shared: Mode Select, Solo CPU Difficulty).
+   * Phones: the cards are stacked and the screen scrolls, so the ACTIVE
+   * card follows the scroll position instead of a hover:
+   *   scrolled to the top     -> first card
+   *   scrolled to the bottom  -> last card
+   *   in between              -> the card whose centre is nearest the
+   *                              middle of the visible area
+   * Deterministic, one active card, no flicker: a card only takes over
+   * once it is clearly nearer (8px hysteresis). One passive scroll
+   * listener per screen, attached once, throttled to a frame. Only runs
+   * while the cards are stacked in one column - side-by-side cards keep
+   * hover / keyboard focus. Purely visual: tapping any card always works.
+   *
+   * opts: { screen: element id, cards(): [elements], focus(): index,
+   *         setFocus(i), state: screen name, blocked(): bool }
+   */
+  function ScrollFocus(opts) {
+    this.o = opts;
+    this.raf = 0;
+    var self = this;
+    byId(opts.screen).addEventListener("scroll", function () {
+      if (!self.raf) self.raf = requestAnimationFrame(function () { self.raf = 0; self.pick(); });
+    }, { passive: true });
+  }
+  ScrollFocus.prototype.stacked = function () {
+    var c = this.o.cards();
+    return c.length > 1 && Math.abs(c[0].offsetLeft - c[1].offsetLeft) < 4;
+  };
+  ScrollFocus.prototype.pick = function () {
+    var o = this.o;
+    if (App.state !== o.state || (o.blocked && o.blocked()) || !this.stacked()) return;
+    var sc = byId(o.screen), cards = o.cards(), cur = o.focus();
+    var max = sc.scrollHeight - sc.clientHeight;
+    if (max < 6) return;                          // everything fits: nothing to follow
+    var pick;
+    if (sc.scrollTop <= 4) pick = 0;
+    else if (sc.scrollTop >= max - 4) pick = cards.length - 1;
+    else {
+      var view = sc.getBoundingClientRect();
+      var mid = view.top + view.height / 2;
+      var bestD = Infinity, curD = Infinity;
+      cards.forEach(function (c, n) {
+        var r = c.getBoundingClientRect();
+        var d = Math.abs(r.top + r.height / 2 - mid);
+        if (n === cur) curD = d;
+        if (d < bestD) { bestD = d; pick = n; }
+      });
+      if (pick !== cur && curD - bestD < 8) pick = cur;
+    }
+    if (pick !== cur) o.setFocus(pick);
+  };
+  /** On entering the screen: stacked layout starts at the top, first card active. */
+  ScrollFocus.prototype.reset = function () {
+    if (!this.stacked()) return false;
+    byId(this.o.screen).scrollTop = 0;
+    this.o.setFocus(0);
+    return true;
+  };
+  ESA.ScrollFocus = ScrollFocus;
+
+  var modeScroll = null;
+  function modeStacked() { return !!modeScroll && modeScroll.stacked(); }
 
   function chooseMode(i) {
     if (modeState.choosing || ESA.Screens.busy) return;
@@ -122,7 +189,7 @@
     ESA.Audio.play("lockIn");
     App.timers.after(560, function () {
       App.session.mode = mode;
-      App.go(mode === "casual" ? "charSelect" : "participants");
+      App.go(MODE_SCREEN[mode]);
     });
   }
 
@@ -134,9 +201,12 @@
       modeState.choosing = false;
       byId("modeGrid").classList.remove("is-choosing");
       modeState.cards.forEach(function (c) { c.classList.remove("is-chosen"); });
-      focusMode(App.session.mode === "tournament" ? 1 : 0, true);
+      focusMode(Math.max(0, MODES.indexOf(App.session.mode)), true);
+      // Stacked phone layout: start at the top with Casual active.
+      if (modeScroll) modeScroll.reset();
       var n = ESA.Characters.count();
-      var lines = modeState.cards[1].querySelector(".mc-lines");
+      var tour = modeState.cards[MODES.indexOf("tournament")];
+      var lines = tour.querySelector(".mc-lines");
       var count = lines.querySelector(".mc-count");
       if (!count) {
         count = document.createElement("span");
@@ -153,12 +223,20 @@
   });
 
   function wireMode() {
-    modeState.cards = Array.prototype.slice.call(document.querySelectorAll(".mode-card"));
+    // Cards in MODES order, whatever their order in the markup.
+    modeState.cards = MODES.map(function (m) { return document.querySelector('.mode-card[data-mode="' + m + '"]'); });
     modeState.cards.forEach(function (card, i) {
       card.addEventListener("mouseenter", function () {
-        if (App.state === "mode" && !modeState.choosing && modeState.focus !== i) focusMode(i);
+        if (App.state === "mode" && !modeState.choosing && modeState.focus !== i && !modeStacked()) focusMode(i);
       });
       card.addEventListener("click", function () { chooseMode(i); });
+    });
+    modeScroll = new ScrollFocus({
+      screen: "modeScreen", state: "mode",
+      cards: function () { return modeState.cards; },
+      focus: function () { return modeState.focus; },
+      setFocus: function (i) { focusMode(i, true); },
+      blocked: function () { return modeState.choosing; }
     });
   }
 
@@ -725,29 +803,48 @@
   }
   ESA.whoNameHTML = whoNameHTML;
 
-  function vsHalf(who, slot) {
+  /**
+   * One side of the VS screen. `tag` replaces the P1 / P2 slot label (Solo:
+   * YOU); `badge` is trusted markup that replaces the tag entirely (Solo
+   * CPU: the "CPU · HARD" chip). The plate is badge row + name, so on
+   * phones it stacks inside its own half and can never run into the other.
+   */
+  function vsHalf(who, slot, tag, badge) {
     var c = who.character;
     return '<div class="vs-art-wrap art-box">' + ESA.bodyArtHTML(c, "selected", "vs-art") + "</div>" +
-           '<div class="vs-plate"><span class="vs-slot">' + ESA.CONTROLS[slot].short + "</span>" +
-           '<span class="vs-name">' + whoNameHTML(who) + "</span></div>";
+           '<div class="vs-plate"><span class="vs-tags">' +
+             (badge || '<span class="vs-slot">' + esc(tag || ESA.CONTROLS[slot].short) + "</span>") + "</span>" +
+           // Long names (Guests can be 16 characters) step the size down so
+           // they wrap at word breaks inside their own half.
+           '<span class="vs-name' + (who.name.length > 13 ? " is-xlong" : who.name.length > 9 ? " is-long" : "") + '">' +
+             whoNameHTML(who) + "</span></div>";
   }
+
+  function vsSolo() { return App.session.mode === "solo" && ESA.Solo && ESA.Solo.hasMatchup(); }
 
   function vsContinue() {
     if (App.state !== "vs") return;
+    if (vsSolo()) {
+      App.go("intro", { def: ESA.Solo.game(), setup: ESA.Solo.setup(), context: ESA.Solo.context() });
+      return;
+    }
     App.go("library");
   }
 
   App.register("vs", {
     el: "vsScreen",
-    parent: "charSelect",
+    parent: function () { return vsSolo() ? "soloDifficulty" : "charSelect"; },
     crumb: "Casual",
     enter: function () {
-      var setup = App.session.setup;
+      var solo = vsSolo();
+      var setup = solo ? ESA.Solo.setup() : App.session.setup;
+      this.crumb = solo ? "Solo" : "Casual";
       if (!setup) return;
       var who = ESA.describeMatchup(setup);
       var p1 = byId("vsP1"), p2 = byId("vsP2");
-      p1.innerHTML = vsHalf(who.p1, "p1");
-      p2.innerHTML = vsHalf(who.p2, "p2");
+      p1.innerHTML = vsHalf(who.p1, "p1", solo ? "You" : null);
+      p2.innerHTML = vsHalf(who.p2, "p2", null, solo ? ESA.Solo.cpuChipHTML() : "");
+      byId("vsScreen").classList.toggle("is-solo", solo);
       p1.style.setProperty("--cc", who.p1.color);
       p2.style.setProperty("--cc", who.p2.color);
       p1.classList.toggle("is-evil", !!who.p1.character.evil);
@@ -756,7 +853,7 @@
     },
     afterEnter: function () {
       ESA.Audio.play("versus");
-      App.timers.after(1750, vsContinue);
+      App.timers.after(vsSolo() ? 2100 : 1750, vsContinue);
     },
     onKey: function (code) { if (ESA.isConfirm(code)) vsContinue(); }
   });
@@ -970,35 +1067,45 @@
   App.register("intro", {
     el: "introScreen",
     parent: function () {
-      return App.params.context && App.params.context.mode === "tournament" ? "hub" : "library";
+      var c = App.params.context, m = c && c.mode;
+      return m === "tournament" ? "hub" : m === "solo" ? (c.single ? "soloGames" : "soloDifficulty") : "library";
     },
     crumb: "Briefing",
     enter: function (p) {
       var g = p.def;
       var who = ESA.describeMatchup(p.setup);
       var isTour = p.context && p.context.mode === "tournament";
-      byId("introKicker").textContent = isTour ? (p.context.tag || "Tournament Match") : "Casual Match";
+      var isSolo = p.context && p.context.mode === "solo";
+      byId("introKicker").textContent = isTour ? (p.context.tag || "Tournament Match")
+        : isSolo ? p.context.tag : "Casual Match";
       byId("introTitle").textContent = g.title;
       byId("introMode").textContent = ESA.Games.resolve(g, p.context).mode;
-      byId("introRules").innerHTML = '<span class="desk-only">' + g.description + '</span>' +
-        '<span class="touch-only">' + (g.touch.description || g.description) + "</span>";
+      byId("introRules").innerHTML = '<span class="desk-only">' + ((isSolo && g.solo.description) || g.description) + '</span>' +
+        '<span class="touch-only">' + ((isSolo && g.solo.touchDescription) || g.touch.description || g.description) + "</span>";
+      var single = !!(isSolo && p.context.single);
+      if (single && g.solo.mode) byId("introMode").textContent = g.solo.mode + " · Score Attack";
       byId("introArt").innerHTML = ESA.Games.iconHTML(g);
       byId("introScreen").style.setProperty("--accent", g.accent);
 
       var html = "";
-      ESA.SLOTS.forEach(function (slot) {
+      (single ? ["p1"] : ESA.SLOTS).forEach(function (slot) {
         var w = who[slot];
-        html += '<div class="ctrl" style="--pc:' + esc(w.color) + '">' +
+        var cpu = isSolo && slot === p.context.cpuSlot;
+        var tag = isSolo ? (cpu ? "CPU" : "You") : ESA.CONTROLS[slot].short;
+        html += '<div class="ctrl' + (cpu ? " is-cpu" : "") + '" style="--pc:' + esc(w.color) + '">' +
                   '<span class="ctrl-face">' + portraitImg(w.character) + "</span>" +
-                  '<span class="ctrl-text"><span class="ctrl-slot">' + ESA.CONTROLS[slot].short + "</span>" +
+                  '<span class="ctrl-text"><span class="ctrl-slot">' + esc(tag) + "</span>" +
                   '<span class="ctrl-name">' + whoNameHTML(w) + "</span></span>" +
-                  '<span class="ctrl-keys desk-only">' + capsHTML(slot, g.controls) + "</span>" +
-                  '<span class="ctrl-touch touch-only">' + touchSummaryHTML(g) +
-                    '<span class="tside">' + (slot === "p1" ? "Left side" : "Right side") + "</span></span>" +
+                  (cpu
+                    ? '<span class="ctrl-keys">' + ESA.Solo.cpuChipHTML(ESA.CPU.difficulty(p.context.difficulty)) + "</span>"
+                    : '<span class="ctrl-keys desk-only">' + capsHTML(slot, g.controls) + "</span>" +
+                      '<span class="ctrl-touch touch-only">' + touchSummaryHTML(g) +
+                        '<span class="tside">' + (isSolo ? "Your controls" : slot === "p1" ? "Left side" : "Right side") + "</span></span>") +
                 "</div>";
       });
       byId("introControls").innerHTML = html;
-      this.crumb = isTour ? "Tournament · Briefing" : "Casual · Briefing";
+      byId("introControls").classList.toggle("is-single", single);
+      this.crumb = isTour ? "Tournament · Briefing" : isSolo ? "Solo · Briefing" : "Casual · Briefing";
     },
     onKey: function (code) {
       if (ESA.isConfirm(code)) introStart();

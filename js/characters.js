@@ -137,6 +137,18 @@
     return out;
   }
 
+  /**
+   * PRESENTATION-ONLY: may this art be drawn horizontally flipped?
+   *   mirrorSafe: true | false | { normal: bool, hurt: bool }
+   * Art with baked-in text, numbers or logos must say false, or that text
+   * reads backwards whenever the character stands on the right. Default true.
+   */
+  function normaliseMirror(m) {
+    if (m === false) return { normal: false, hurt: false };
+    if (m && typeof m === "object") return { normal: m.normal !== false, hurt: m.hurt !== false };
+    return { normal: true, hurt: true };
+  }
+
   ESA.Characters = {
     /**
      * Register an ESA member. Required: id, displayName, art.normal, art.hurt.
@@ -166,6 +178,11 @@
      *                 Every character automatically gets an Evil variant
      *                 built from these SAME image files - never add
      *                 evil_*.png assets.
+     *   mirrorSafe    optional, presentation only (see normaliseMirror):
+     *                 false (or { normal, hurt }) for art with readable
+     *                 text / numbers / logos. Such art is never flipped -
+     *                 placement alone puts it on its side. The Evil variant
+     *                 inherits the same rule.
      */
     register: function (def) {
       if (!def || !def.id || registry[def.id]) {
@@ -193,7 +210,8 @@
         victoryAnimation: def.victoryAnimation || null,
         trim: normaliseTrim(def.trim),
         ui: normaliseUi(def.ui),
-        evilEyes: normaliseEyes(def.evil)
+        evilEyes: normaliseEyes(def.evil),
+        mirrorSafe: normaliseMirror(def.mirrorSafe)
       };
       // Avatar fields (see js/participants.js). A registry entry IS the
       // Normal-variant avatar; Evil avatars inherit from it.
@@ -239,6 +257,7 @@
       normal: { r: 15, eyes: [[183, 285], [318, 275]] },
       hurt:   { r: 14, eyes: [[205, 300, 0.55], [335, 233]] }
     },
+    mirrorSafe: false,                          // PSG crest ("PARIS") + Nike logos, both states
     tagline: "Founding member. Refuses to lose."
   });
 
@@ -269,6 +288,7 @@
       normal: { r: 15, eyes: [[495, 428], [627, 406]] },
       hurt:   { r: 14, eyes: [[405, 530, 0.55], [522, 470]] }
     },
+    mirrorSafe: { normal: true, hurt: false },  // hurt: "LaGooGoo" lettering
     tagline: "Hands up. Already warmed up."
   });
 
@@ -284,6 +304,7 @@
       normal: { r: 16, lens: [[455, 385, 72, 50], [655, 352, 70, 48]], eyes: [[478, 374], [642, 343]] },
       hurt:   { r: 14, lens: [[220, 380, 75, 55], [410, 320, 70, 50]], eyes: [[232, 378, 0.5], [400, 318, 0.5]] }
     },
+    mirrorSafe: { normal: true, hurt: false },  // hurt: "WAAAA2" lettering
     tagline: "Sees every move coming."
   });
 
@@ -314,6 +335,7 @@
       normal: { r: 13, eyes: [[466, 302], [574, 290]] },
       hurt:   { r: 13, eyes: [[272, 697], [367, 688]] }
     },
+    mirrorSafe: false,                          // IDEAS cup, MARKETING VP, AMR badge; hurt: speech bubbles
     tagline: "Marketing VP. Runs on iced ideas."
   });
 
@@ -329,6 +351,7 @@
       normal: { r: 13, lens: [[405, 333, 45, 38], [562, 312, 46, 38]], eyes: [[420, 330], [555, 308]] },
       hurt:   { r: 13, lens: [[355, 515, 50, 40], [548, 488, 50, 42]], eyes: [[355, 520, 0.55], [550, 490]] }
     },
+    mirrorSafe: false,                          // shirt / shorts number "1", both states
     tagline: "Number one. Nothing gets past."
   });
 
@@ -359,6 +382,7 @@
       normal: { r: 14, eyes: [[466, 278], [580, 234]] },
       hurt:   { r: 14, eyes: [[300, 525, 0.55], [462, 480]] }
     },
+    mirrorSafe: { normal: false, hurt: true },  // normal: the 6 / 7 numbers
     tagline: "Six. Seven. Gone."
   });
 
@@ -395,6 +419,21 @@
     return ESA.Avatars ? ESA.Avatars.get(key) : ESA.Characters.get(key);
   }
   ESA.visualOf = vis;
+
+  /**
+   * May this avatar's art (normal or hurt state) be drawn flipped?
+   * Roster entries carry mirrorSafe; Evil avatars inherit it from their
+   * base entry (same PNGs, same rule). Guests are generated art with no
+   * text, so they default to safe unless their avatar says otherwise.
+   * Presentation only - never consulted by movement, colliders or physics.
+   */
+  ESA.canMirror = function (charId, hurt) {
+    var c = vis(charId);
+    var m = c && c.mirrorSafe;
+    if (m === false) return false;
+    if (!m || typeof m !== "object") return true;
+    return hurt ? m.hurt !== false : m.normal !== false;
+  };
 
   ESA.spriteBox = function (charId, hurt) {
     var c = vis(charId);
@@ -519,7 +558,9 @@
     var q = function (s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); };
     var V = ESA.Variants;
     var evil = !!(c && c.evil);
-    return '<span class="art-frame ' + q(cls || "") + (evil ? " is-evil" : "") + '" style="' + q(f.frame) + '"' + (attrs || "") + '>' +
+    var fixed = c && !ESA.canMirror(c, which === "hurt");
+    return '<span class="art-frame ' + q(cls || "") + (evil ? " is-evil" : "") + (fixed ? " no-mirror" : "") +
+           '" style="' + q(f.frame) + '"' + (attrs || "") + '>' +
            '<img class="art-img" src="' + q(artSrc(c, which)) + '" alt="" draggable="false" style="' + q(f.img) + '" />' +
            (evil && V ? V.bodyOverlayHTML(c, which) : "") + "</span>";
   };
@@ -533,6 +574,8 @@
       img.setAttribute("style", f.frame);
       if (inner.getAttribute("src") !== artSrc(c, which)) inner.setAttribute("src", artSrc(c, which));
       inner.setAttribute("style", f.img);
+      // Side-flipping CSS (P2 select panel, VS, Final) skips mirror-unsafe art.
+      img.classList.toggle("no-mirror", !ESA.canMirror(c, which === "hurt"));
       if (ESA.Variants) ESA.Variants.decorate(img, c, which, "body");
       return;
     }
@@ -575,7 +618,10 @@
       hurtUntil: 0,
       hurtFor: 0,
       recoilX: 0,
-      recoilY: 0
+      recoilY: 0,
+      // Fraction of a knockback left after one second (games may tune it:
+      // a lower value = a shorter, snappier shove).
+      recoilDecay: opts.recoilDecay || 0.0045
     };
   };
 
@@ -603,7 +649,7 @@
     if (p.recoilX || p.recoilY) {
       p.x += p.recoilX * dt;
       p.y += p.recoilY * dt;
-      var decay = Math.pow(0.0045, dt);
+      var decay = Math.pow(p.recoilDecay, dt);
       p.recoilX *= decay;
       p.recoilY *= decay;
       if (Math.abs(p.recoilX) < 1) p.recoilX = 0;
@@ -664,6 +710,9 @@
   ESA.drawSprite = function (ctx, charId, hurt, cx, cy, o) {
     o = o || {};
     var c = vis(charId);
+    // Mirror safety: art with readable text is never flipped. The sprite
+    // still stands at (cx, cy) on its own side - only its facing differs.
+    var flip = !!o.flip && ESA.canMirror(c || charId, hurt);
     // Evil variants and Guests draw from a pre-rendered, cached canvas
     // (built ONCE per base asset / state - never per frame). Normal
     // characters draw their PNG exactly as before.
@@ -684,7 +733,7 @@
     if (o.alpha !== undefined) ctx.globalAlpha *= o.alpha;
     ctx.translate(cx, cy - (o.bounce || 0));
     if (o.rotate) ctx.rotate(o.rotate);
-    ctx.scale(o.flip ? -sx : sx, sy);
+    ctx.scale(flip ? -sx : sx, sy);
     if (src) {
       // The cached canvas covers file space from (fx0, fy0) at k canvas px
       // per file px (with room for the Evil aura around the visible box).
@@ -707,11 +756,16 @@
     if (blend <= 0.001) { ESA.drawSprite(ctx, charId, false, cx, cy, o); return; }
     if (blend >= 0.999) { ESA.drawSprite(ctx, charId, true, cx, cy, o); return; }
     var base = o.alpha === undefined ? 1 : o.alpha;
+    // Mid-crossfade both states must face the same way: if either one is
+    // mirror-unsafe, neither is flipped for the ~110 ms of the fade.
+    var flip = o.flip;
+    if (flip && !(ESA.canMirror(charId, false) && ESA.canMirror(charId, true))) o.flip = false;
     o.alpha = base * (1 - blend);
     ESA.drawSprite(ctx, charId, false, cx, cy, o);
     o.alpha = base * blend;
     ESA.drawSprite(ctx, charId, true, cx, cy, o);
     o.alpha = base;
+    o.flip = flip;
   };
 
   /** 0..1 hurt blend for an arena player, fading in and out of the hurt art. */

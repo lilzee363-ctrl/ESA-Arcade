@@ -34,8 +34,12 @@
    Evil avatar inherits from it (same trim, spriteH, PNG files), so the two
    are mechanically identical.
 
-   Future modes (e.g. Solo vs CPU) just call forVariant()/addGuest() for
-   the human and the CPU and put both participantIds in a setup.
+   CPU OPPONENTS (Solo) are participants too, but in their own namespace:
+     cpu-airhockey-hard-03  cpu  Saif, Normal, hard -> avatar "saif"
+   addCpu() creates one; it lives in memory only, never appears in list()
+   or a roster, is never saved, and its id can never equal a human
+   participant-NN id. It resolves / describes like any other participant,
+   so games, the HUD and results need no CPU-specific code.
    ========================================================================== */
 
 (function (ESA) {
@@ -50,6 +54,8 @@
   var seq = 0;                         // participant-NN counter
   var guestSeq = 0;                    // "Guest N" fallback counter
   var loaded = false;
+  var cpuPool = Object.create(null);   // cpu participantId -> participant (memory only)
+  var cpuSeq = 0;
 
   function pad2(n) { return (n < 10 ? "0" : "") + n; }
 
@@ -269,6 +275,33 @@
     cleanName: cleanName,
 
     /**
+     * A CPU opponent drawn as a roster character. `tag` names the game
+     * ("airhockey"), `difficulty` is "easy" | "normal" | "hard". The
+     * character never affects difficulty - that is AI behaviour only.
+     */
+    addCpu: function (characterId, variant, difficulty, tag) {
+      var c = ESA.Characters.get(characterId);
+      if (!c) return null;
+      variant = variant === "evil" ? "evil" : "normal";
+      cpuSeq++;
+      var id = "cpu-" + String(tag || "game").toLowerCase().replace(/[^a-z0-9]/g, "") + "-" +
+               (difficulty || "normal") + "-" + pad2(cpuSeq);
+      var p = {
+        participantId: id,
+        type: "cpu",
+        displayName: variantName(c, variant),
+        characterId: c.id,
+        variant: variant,
+        difficulty: difficulty || "normal",
+        guestAppearance: null
+      };
+      cpuPool[id] = p;
+      return p;
+    },
+
+    isCpu: function (ref) { var p = this.resolve(ref); return !!p && p.type === "cpu"; },
+
+    /**
      * Resolves anything a setup might carry to a participant:
      * a participant, a participantId, or (legacy / migration) a plain
      * character id ("zima" -> Normal Zima, "zima~evil" -> Evil Zima).
@@ -278,6 +311,7 @@
       if (!ref) return null;
       if (typeof ref === "object") return ref.participantId ? ref : null;
       if (pool[ref]) return pool[ref];
+      if (cpuPool[ref]) return cpuPool[ref];
       var m = /^(.+)~evil$/.exec(ref);
       if (m && ESA.Characters.get(m[1])) return this.forVariant(m[1], "evil");
       if (ESA.Characters.get(ref)) return this.forVariant(ref, "normal");
@@ -296,6 +330,7 @@
     identityKey: function (ref) {
       var p = this.resolve(ref);
       if (!p) return "";
+      if (p.type === "cpu") return "cpu:" + p.participantId;
       return p.type === "guest" ? "guest:" + p.participantId : p.characterId + ":" + p.variant;
     }
   };
@@ -305,7 +340,7 @@
   ESA.nameHTML = function (ref) {
     var p = P.resolve(ref);
     if (!p) return "";
-    if (p.type === "roster" && p.variant === "evil") {
+    if ((p.type === "roster" || p.type === "cpu") && p.variant === "evil") {
       var c = ESA.Characters.get(p.characterId);
       // One inline wrapper, so flex-column parents keep it on one line.
       return '<span class="evil-name"><span class="evil-word">Evil</span> ' + ESA.esc(c ? c.displayName : p.displayName) + "</span>";
@@ -379,7 +414,10 @@
    * the two can always be told apart.
    * ================================================================== */
   ESA.describeMatchup = function (setup) {
-    var a = P.resolve(setup.p1), b = P.resolve(setup.p2);
+    // A Score Attack run has no P2 at all: { p1 } only. p2 then describes
+    // nobody (character null) and `single` is true.
+    var single = !setup.p2;
+    var a = P.resolve(setup.p1), b = single ? null : P.resolve(setup.p2);
     var c1 = P.avatar(a), c2 = P.avatar(b);
     var mirror = !!(a && b && a.participantId === b.participantId);
     var sameColour = mirror || (c1 && c2 && c1.color === c2.color);
@@ -394,7 +432,7 @@
         color: slot === "p2" && sameColour ? ESA.CONTROLS.p2.color : (c ? c.color : "#c0871f")
       };
     }
-    return { mirror: mirror, p1: side("p1", a, c1), p2: side("p2", b, c2) };
+    return { mirror: mirror, single: single, p1: side("p1", a, c1), p2: side("p2", b, c2) };
   };
 
 })(window.ESA);

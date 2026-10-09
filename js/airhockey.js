@@ -55,7 +55,20 @@
   var SPRITE_H = 84;                        // standard display height
   var SPRITE_MAX_W = 72;                    // very wide art is scaled down to fit
   var MOVE_SPEED = 290;
-  var ACCEL = 11;                           // higher = snappier start/stop
+  /*
+   * Mallet response (per second, exponential approach - frame-rate
+   * independent). One shared rate used to drive start, stop, turns AND
+   * reversals (it was 11/s, ~0.21 s to 90% for everything), which is what
+   * testers felt as stiffness. Each is now tuned on its own:
+   *   ACCEL     speeding up along the stick direction     ~0.11 s to 90%
+   *   OVERSPEED shedding speed above the target (dash end) ~0.09 s
+   *   REVERSE   velocity pointing AGAINST the stick       ~0.08 s
+   *   TURN      sideways velocity when the stick turns    ~0.09 s
+   *   BRAKE     stick released                            ~0.13 s to 10%
+   * Top speed (MOVE_SPEED) and the dash are unchanged: this is response,
+   * not a speed buff. A little glide remains, so it never teleports.
+   */
+  var ACCEL = 21, OVERSPEED = 26, REVERSE = 30, TURN = 26, BRAKE = 18;
   var DASH_SPEED = 600;
   var DASH_TIME = 0.16;                     // seconds of burst
   var DASH_COOLDOWN = 1.7;
@@ -81,6 +94,14 @@
    */
   function neutralMods() { return { speed: 1, dashCooldown: 1, radius: 1 }; }
 
+  /** Read-only table facts for CPU strategies (the same numbers as above). */
+  var GEO = Object.freeze({
+    left: RINK.left, right: RINK.right, top: RINK.top, bottom: RINK.bottom,
+    cx: CX, cy: CY, mouthTop: MOUTH_TOP, mouthBot: MOUTH_BOT, goalHalf: GOAL_HALF,
+    malletR: MALLET_R, puckR: PUCK_R, puckDrag: PUCK_DRAG, wallE: WALL_E,
+    moveSpeed: MOVE_SPEED, dashSpeed: DASH_SPEED, dashTime: DASH_TIME
+  });
+
   /* ================================================================== */
   function AirHockey(api, setup) {
     this.api = api;
@@ -95,6 +116,8 @@
     this.clock = 0;                         // ms of simulated play
 
     var who = ESA.describeMatchup(setup);
+    // Optional disc labels from the match context (Solo: YOU / CPU).
+    this.tags = (api && api.context && api.context.slotTags) || null;
     this.mods = { p1: neutralMods(), p2: neutralMods() };
     this.p1 = this.makeMallet(who.p1, "right");
     this.p2 = this.makeMallet(who.p2, "left");
@@ -260,16 +283,45 @@
   /* ------------------------------------------------------------------ *
    * Input
    * ------------------------------------------------------------------ */
-  /** Keyboard: Space (P1) / Enter (P2) are each slot's action1. */
+  /**
+   * Keyboard: Space (P1) / Enter (P2) are each slot's action1. Routed
+   * through ESA.Controls like every other source, so a slot owned by
+   * someone else (a Solo CPU) ignores the key.
+   */
   AirHockey.prototype.onKeyDown = function (code) {
-    if (code === ESA.CONTROLS.p1.action) this.onAction("p1", "action1");
-    else if (code === ESA.CONTROLS.p2.action || code === "NumpadEnter") this.onAction("p2", "action1");
+    if (code === ESA.CONTROLS.p1.action) ESA.Controls.fireAction("p1", "action1", "keyboard");
+    else if (code === ESA.CONTROLS.p2.action || code === "NumpadEnter") ESA.Controls.fireAction("p2", "action1", "keyboard");
   };
 
-  /** Any source (keyboard, touch DASH button, future CPU). */
+  /** Any source (keyboard, touch DASH button, CPU). */
   AirHockey.prototype.onAction = function (slot, action) {
     if (this.state !== "playing" || action !== "action1") return;
     if (slot === "p1" || slot === "p2") this.dash(this[slot]);
+  };
+
+  /**
+   * What a player can SEE, for a CPU strategy (js/cpu-airhockey.js). Fills
+   * a caller-owned object (no per-frame allocation). Deliberately excludes
+   * anything hidden: no RNG, no spawn timer, no future puck state - and no
+   * REVERSE flag, so a CPU can't quietly pre-invert its stick.
+   */
+  AirHockey.prototype.observe = function (slot, v) {
+    var me = this[slot], op = this[slot === "p1" ? "p2" : "p1"];
+    if (!me) return v;
+    var pk = this.puck;
+    var a = this.powerUps && this.powerUps.spawner && this.powerUps.spawner.active;
+    v.geo = GEO;
+    v.live = this.state === "playing";
+    v.side = slot === "p1" ? -1 : 1;           // -1: defends the left goal, +1: the right
+    v.meX = me.x; v.meY = me.y; v.meR = me.r;
+    v.meVX = me.mvx; v.meVY = me.mvy;
+    v.dashReady = me.dashCd <= 0;
+    v.stunned = this.isStunned(me);
+    v.opX = op.x; v.opY = op.y; v.opR = op.r;
+    v.puckX = pk.x; v.puckY = pk.y; v.puckVX = pk.vx; v.puckVY = pk.vy;
+    v.hasPickup = !!a;
+    v.pickupX = a ? a.x : 0; v.pickupY = a ? a.y : 0;
+    return v;
   };
 
   /** Lets the touch overlay dim a stunned player's controls. */
@@ -355,14 +407,26 @@
 
     if (p.dashT > 0) {
       p.dashT -= dt;                         // burst holds its velocity
+    } else if (dir) {
+      // Split velocity into ALONG the stick and SIDEWAYS to it, and steer
+      // each at its own rate: old momentum stops fighting a new direction
+      // almost at once, while speeding up keeps a touch of weight.
+      var mag = Math.min(1, Math.hypot(dir.x, dir.y));   // analog stick: partial = slower
+      var ux = p.dirX, uy = p.dirY;
+      var along = p.vx * ux + p.vy * uy;
+      var sx = p.vx - along * ux, sy = p.vy - along * uy;
+      var target = mag * maxSp;
+      var rate = along < 0 ? REVERSE : along > target ? OVERSPEED : ACCEL;
+      along += (target - along) * (1 - Math.exp(-rate * dt));
+      var keepSide = Math.exp(-TURN * dt);
+      p.vx = along * ux + sx * keepSide;
+      p.vy = along * uy + sy * keepSide;
     } else {
-      var tx = dir ? dir.x * maxSp : 0;
-      var ty = dir ? dir.y * maxSp : 0;
-      var k = 1 - Math.exp(-ACCEL * dt);
-      p.vx += (tx - p.vx) * k;
-      p.vy += (ty - p.vy) * k;
-      if (!dir && Math.abs(p.vx) < 2) p.vx = 0;
-      if (!dir && Math.abs(p.vy) < 2) p.vy = 0;
+      var keep = Math.exp(-BRAKE * dt);      // controlled stop, tiny glide
+      p.vx *= keep;
+      p.vy *= keep;
+      if (Math.abs(p.vx) < 4) p.vx = 0;
+      if (Math.abs(p.vy) < 4) p.vy = 0;
     }
     p.dashCd = Math.max(0, p.dashCd - dt);
 
@@ -370,8 +434,11 @@
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     this.clampToHalf(p);
-    if (p.x !== ox + p.vx * dt) p.vx *= 0.3;  // hit a boundary: bleed sideways speed
-    if (p.y !== oy + p.vy * dt) p.vy *= 0.3;
+    // Blocked per AXIS: pushing into the centre line / a rail stops only
+    // that component; the free one (e.g. sliding up the centre line on a
+    // diagonal) keeps its full speed.
+    if (p.x !== ox + p.vx * dt) p.vx = 0;
+    if (p.y !== oy + p.vy * dt) p.vy = 0;
     p.mvx = dt > 0 ? (p.x - ox) / dt : 0;
     p.mvy = dt > 0 ? (p.y - oy) / dt : 0;
 
@@ -952,7 +1019,7 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = ESA.CONTROLS[p.slot].color;
-    ctx.fillText(ESA.CONTROLS[p.slot].short, p.x, p.y + p.r + 15);
+    ctx.fillText((this.tags && this.tags[p.slot]) || ESA.CONTROLS[p.slot].short, p.x, p.y + p.r + 15);
     ctx.restore();
   };
 
@@ -1070,6 +1137,13 @@
     accent: "#5ad1ff",
     canTie: false,
     tournamentEligible: true,
+    // Solo vs CPU: first to 5, no clock (strategy in js/cpu-airhockey.js).
+    soloEligible: true,
+    soloModeType: "cpu-versus",
+    solo: { blurb: "First to 5 vs the CPU. WASD + Space to dash.", touchBlurb: "First to 5 vs the CPU. Joystick + DASH.",
+            description: "<b>Your character is the mallet.</b> Move with <b>W A S D</b>, stay on your half and knock the puck " +
+                         "past the CPU. <b>Space</b> fires a short dash. Grab pickups to hit the CPU with a SMACK, " +
+                         "a GARA EH YA AMR??!!, a SHRINK or a REVERSE - they work on it exactly like on a human." },
     enabled: true,
     create: function (api, setup) { return new AirHockey(api, setup); }
   });
