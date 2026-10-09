@@ -45,7 +45,7 @@
     /** Shared, cross-screen session data. */
     session: {
       mode: null,                       // "casual" | "tournament"
-      setup: null,                      // casual { p1, p2 } character ids
+      setup: null,                      // casual { p1, p2 } PARTICIPANT ids
       libraryIndex: 0,
       tournament: null                  // ESA.Tournament while one is live
     },
@@ -141,6 +141,9 @@
       }
 
       if (Modal.active()) {
+        // Custom sheets (variant chooser, guest creator) manage their own
+        // keys - Tab and typing must keep working inside them.
+        if (Modal.top().type === "custom") { Modal.onKey(code, e); return; }
         if (code === "Escape" || isConfirm(code) || code === "Tab") e.preventDefault();
         Modal.onKey(code, e);
         return;
@@ -254,6 +257,15 @@
       var card = document.createElement("div");
       card.className = "modal-card modal-" + m.type;
 
+      // Custom sheets build their own content (DOM APIs only - user text
+      // such as guest nicknames is never parsed as HTML).
+      if (m.type === "custom") {
+        if (m.cls) card.className += " " + m.cls;
+        layer.appendChild(card);
+        m.build(card, m);
+        return;
+      }
+
       if (m.kicker) {
         var k = document.createElement("div");
         k.className = "modal-kicker";
@@ -317,9 +329,27 @@
       for (var k = 0; k < btns.length; k++) btns[k].classList.toggle("is-focus", k === m.focus);
     },
 
-    onKey: function (code) {
+    onKey: function (code, e) {
       var m = this.top();
       if (!m) return;
+      if (m.type === "custom") {
+        if (m.onKey && m.onKey(code, e)) return;
+        if (code === "Escape") {
+          if (e) e.preventDefault();
+          ESA.Audio.play("uiBack");
+          if (m.onEscape) m.onEscape(); else this.pop();
+          return;
+        }
+        // Enter / Space press the focused button inside the sheet.
+        if (isConfirm(code)) {
+          var ae = document.activeElement;
+          if (ae && ae.tagName === "BUTTON" && this.layer.contains(ae) && !ae.disabled) {
+            if (e) e.preventDefault();
+            ae.click();
+          }
+        }
+        return;
+      }
       var vertical = m.type === "menu";
       var prevKeys = vertical ? ["ArrowUp", "KeyW"] : ["ArrowLeft", "KeyA", "ArrowUp", "KeyW"];
       var nextKeys = vertical ? ["ArrowDown", "KeyS"] : ["ArrowRight", "KeyD", "ArrowDown", "KeyS"];
@@ -517,6 +547,9 @@
       teardownRun();
       var def = p.def;
       var players = ESA.describeMatchup(p.setup);
+      // Build Evil / Guest sprite caches now, behind the veil - never on
+      // the first gameplay frame.
+      if (ESA.Variants) ESA.SLOTS.forEach(function (s) { ESA.Variants.warm(players[s].character); });
       Run = {
         token: ++runToken,
         def: def,

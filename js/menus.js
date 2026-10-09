@@ -23,10 +23,15 @@
    * Head-and-shoulders portrait <img> for a character. Must sit inside a
    * square, overflow:hidden box (faces, tiles); the crop comes from the
    * registry's trim data so padded and tightly-cropped art look the same.
+   * `c` is any avatar (roster Normal / Evil, or a Guest); Evil avatars get
+   * the shared Evil treatment (js/variants.js) as a sibling overlay.
    */
   function portraitImg(c, cls) {
-    return '<img class="' + (cls || "") + '" src="' + esc(c.art.portrait) + '" alt="" ' +
-           'style="' + esc(ESA.headStyle(c)) + '" />';
+    if (!c) return "";
+    var evil = !!c.evil;
+    return '<img class="' + esc(cls || "") + (evil ? " is-evil-art" : "") + '" src="' + esc(c.art.portrait) + '" alt="" ' +
+           'style="' + esc(ESA.headStyle(c)) + '" />' +
+           (evil && ESA.Variants ? ESA.Variants.headOverlayHTML(c) : "");
   }
   ESA.portraitImg = portraitImg;
 
@@ -157,21 +162,7 @@
     });
   }
 
-  /* ================================================================== *
-   * CASUAL CHARACTER SELECT
-   * ================================================================== */
-  var cs = {
-    chars: [],
-    cols: 1,
-    cursor: { p1: 0, p2: 0 },
-    // SELECT -> CONFIRM -> LOCKED IN. `pending` is a chosen-but-unconfirmed
-    // fighter; only Confirm turns it into `locked`.
-    pending: { p1: null, p2: null },
-    locked: { p1: null, p2: null },
-    tiles: [],
-    readyGen: 0
-  };
-
+  /* --- Roster grid sizing + navigation (Casual + Tournament) ------- */
   function gridCols(n) {
     if (n <= 4) return Math.max(1, n);
     if (n <= 6) return 3;
@@ -208,7 +199,8 @@
     var gap = opts.gap || 12;
     var label = opts.label || 28;
     var maxTile = opts.max || 196;
-    var w = wrap.clientWidth || 600;
+    // opts.edge: room for corner badges that hang outside the tiles.
+    var w = (wrap.clientWidth || 600) - (opts.edge || 0);
     var h = wrap.clientHeight || 400;
 
     function tileFor(c) {
@@ -254,25 +246,130 @@
   }
   ESA.gridMove = gridMove;
 
-  function csBuild() {
+  /* ------------------------------------------------------------------ *
+   * Roster entries shared by Casual and Tournament: every permanent
+   * character (a BASE tile - its Normal / Evil variant is chosen after the
+   * tap), then this session's Guests, then the "+ Add Guest" tile. The
+   * permanent roster keeps its explicit grid rules (phone portrait: 3
+   * columns, rows as needed); guests simply add rows.
+   * ------------------------------------------------------------------ */
+  function rosterEntries() {
+    var list = ESA.Characters.list().map(function (c) { return { kind: "char", c: c }; });
+    ESA.Participants.guests().forEach(function (p) {
+      list.push({ kind: "guest", p: p, c: ESA.Participants.avatar(p) });
+    });
+    list.push({ kind: "add" });
+    return list;
+  }
+  ESA.rosterEntries = rosterEntries;
+
+  /** One roster tile (DOM APIs: guest nicknames are set as text only). */
+  function rosterTile(e, i, prefix) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = prefix + "-tile" + (e.kind === "guest" ? " is-guest" : e.kind === "add" ? " is-add" : "");
+    b.style.setProperty("--i", i);
+    var img = document.createElement("span");
+    img.className = prefix + "-tile-img";
+    var name = document.createElement("span");
+    name.className = prefix + "-tile-name";
+    if (e.kind === "add") {
+      b.style.setProperty("--cc", "#e5a92f");
+      img.innerHTML = '<span class="add-plus" aria-hidden="true"></span>';
+      name.textContent = "Add Guest";
+      b.setAttribute("aria-label", "Add a guest");
+    } else {
+      b.style.setProperty("--cc", e.c.color);
+      img.innerHTML = portraitImg(e.c);
+      name.textContent = e.kind === "guest" ? e.p.displayName : e.c.displayName;
+      if (e.kind === "guest") {
+        var tag = document.createElement("span");
+        tag.className = "guest-tag";
+        tag.textContent = "Guest";
+        img.appendChild(tag);
+      }
+    }
+    b.appendChild(img);
+    b.appendChild(name);
+    return b;
+  }
+  ESA.rosterTile = rosterTile;
+
+  /** Display name into an element: "EVIL" gets the premium treatment. */
+  function setNameEl(el, c) {
+    el.textContent = "";
+    if (c && c.evil) {
+      var w = document.createElement("span");
+      w.className = "evil-word";
+      w.textContent = "Evil";
+      el.appendChild(w);
+      el.appendChild(document.createTextNode(" " + ESA.Characters.get(c.baseId).displayName));
+    } else {
+      el.textContent = c ? c.displayName : "";
+    }
+  }
+  ESA.setNameEl = setNameEl;
+
+  /* ================================================================== *
+   * CASUAL CHARACTER SELECT
+   *   tap a fighter -> preview + NORMAL / EVIL -> CONFIRM | CHANGE -> LOCKED IN
+   * A first tap never commits anything. The same exact identity (e.g.
+   * Normal Zima, or one Guest) can't be on both sides - Zima vs Evil Zima
+   * is the new mirror match.
+   * ================================================================== */
+  var cs = {
+    entries: [],
+    cols: 1,
+    cursor: { p1: 0, p2: 0 },
+    // SELECT -> CONFIRM -> LOCKED IN. `pending` is a chosen-but-unconfirmed
+    // entry; only Confirm turns it into `locked`.
+    pending: { p1: null, p2: null },
+    locked: { p1: null, p2: null },
+    lockedPid: { p1: null, p2: null },
+    variant: { p1: "normal", p2: "normal" },     // of the pending / locked roster pick
+    memory: { p1: {}, p2: {} },                  // last variant per character, per slot
+    tiles: [],
+    readyGen: 0
+  };
+
+  var VKEYS = {
+    p1: { variant: "W S", change: "A D" },
+    p2: { variant: "↑ ↓", change: "← →" }
+  };
+
+  function other(slot) { return slot === "p1" ? "p2" : "p1"; }
+  function csEntry(i) { return i === null || i === undefined ? null : cs.entries[i] || null; }
+
+  /** True if `slot` can't take entry i (variant v) because the other side has it. */
+  function csTaken(slot, i, v) {
+    var o = other(slot);
+    if (cs.locked[o] === null || cs.locked[o] !== i) return false;
+    var e = csEntry(i);
+    return !!e && (e.kind === "guest" || (e.kind === "char" && cs.variant[o] === v));
+  }
+
+  /** Avatar shown for `slot` on entry i (variant applies once picked). */
+  function csAvatar(slot, i, picked) {
+    var e = csEntry(i);
+    if (!e || e.kind === "add") return null;
+    if (e.kind === "guest") return e.c;
+    return picked ? ESA.Avatars.forVariant(e.c.id, cs.variant[slot]) : e.c;
+  }
+
+  function csBuildTiles() {
     var host = byId("csRoster");
     host.innerHTML = "";
-    cs.tiles = cs.chars.map(function (c, i) {
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "cs-tile";
-      b.style.setProperty("--i", i);
-      b.style.setProperty("--cc", c.color);
-      b.innerHTML =
-        '<span class="cs-tile-img">' + portraitImg(c) + "</span>" +
-        '<span class="cs-tile-name">' + esc(c.displayName) + "</span>" +
-        '<span class="cs-cursor p1">P1</span><span class="cs-cursor p2">P2</span>';
+    cs.tiles = cs.entries.map(function (e, i) {
+      var b = rosterTile(e, i, "cs");
+      b.insertAdjacentHTML("beforeend", '<span class="cs-cursor p1">P1</span><span class="cs-cursor p2">P2</span>');
       b.addEventListener("click", function () { csClickTile(i); });
       host.appendChild(b);
       return b;
     });
-    cs.cols = sizeRoster(host, host.parentNode, cs.chars.length, null, { label: 40 });
+    cs.cols = sizeRoster(host, host.parentNode, cs.entries.length, null, { label: 40, edge: 14 });
+  }
 
+  function csBuildSides() {
     ESA.SLOTS.forEach(function (slot) {
       var ctl = ESA.CONTROLS[slot];
       var side = byId(slot === "p1" ? "csSideP1" : "csSideP2");
@@ -282,6 +379,7 @@
           '<span class="cs-state">Selecting</span></div>' +
         '<div class="cs-portrait art-box"><span class="cs-portrait-glow"></span>' +
           '<span class="art-frame cs-art"><img class="art-img" alt="" draggable="false" /></span>' +
+          '<span class="cs-add-ph" aria-hidden="true"><span class="add-plus"></span></span>' +
           '<span class="cs-stamp">Locked In</span></div>' +
         '<div class="cs-name"></div>' +
         '<div class="cs-tagline"></div>' +
@@ -292,18 +390,26 @@
         '<button class="btn btn-ghost btn-small cs-change" type="button">Change</button>' +
         // Confirmation step (shown while a fighter is selected but not locked).
         '<div class="cs-confirm" role="group">' +
+          '<div class="cs-variant" role="group" aria-label="Normal or Evil">' +
+            '<button class="cs-vbtn" type="button" data-v="normal">Normal</button>' +
+            '<button class="cs-vbtn is-evil" type="button" data-v="evil">Evil</button>' +
+          "</div>" +
           '<div class="cs-ask">Select <b class="cs-ask-name"></b>?</div>' +
           '<div class="cs-confirm-row">' +
             '<button class="btn btn-gold btn-small cs-ok" type="button">&#10003; Confirm</button>' +
             '<button class="btn btn-ghost btn-small cs-no" type="button">Change</button>' +
           "</div>" +
           '<div class="cs-confirm-keys desk-only"><span class="keycap">' + esc(ctl.selectLabel.lock) +
-            '</span> confirm &middot; <span class="keycap">' + esc(ctl.selectLabel.move) + "</span> change</div>" +
+            '</span> confirm <span class="cs-vkeys">&middot; <span class="keycap">' + esc(VKEYS[slot].variant) +
+            '</span> normal / evil </span>&middot; <span class="keycap">' + esc(VKEYS[slot].change) + "</span> change</div>" +
         "</div>" +
         '<div class="cs-lockflash" aria-hidden="true"><span class="cs-lf-who"></span><span class="cs-lf-word">Locked In</span></div>';
       side.querySelector(".cs-change").addEventListener("click", function () { csUnlock(slot); });
       side.querySelector(".cs-ok").addEventListener("click", function () { csConfirm(slot); });
       side.querySelector(".cs-no").addEventListener("click", function () { csCancelPending(slot, true); });
+      Array.prototype.forEach.call(side.querySelectorAll(".cs-vbtn"), function (b) {
+        b.addEventListener("click", function () { csSetVariant(slot, b.getAttribute("data-v")); });
+      });
     });
   }
 
@@ -314,6 +420,12 @@
     return cs.locked.p1 === null ? "p1" : (cs.locked.p2 === null ? "p2" : null);
   }
 
+  function csEvilShown(slot, i) {
+    var e = csEntry(i);
+    return !!e && e.kind === "char" && cs.variant[slot] === "evil" &&
+           (cs.pending[slot] === i || cs.locked[slot] === i);
+  }
+
   function csRender() {
     cs.tiles.forEach(function (t, i) {
       t.classList.toggle("has-p1", cs.cursor.p1 === i);
@@ -322,40 +434,74 @@
       t.classList.toggle("pending-p2", cs.pending.p2 === i);
       t.classList.toggle("locked-p1", cs.locked.p1 === i);
       t.classList.toggle("locked-p2", cs.locked.p2 === i);
+      t.classList.toggle("evil-p1", csEvilShown("p1", i));
+      t.classList.toggle("evil-p2", csEvilShown("p2", i));
     });
     var turn = csPointerSlot();
+    csSide("p1").parentNode.classList.toggle("has-pending",
+      (cs.pending.p1 !== null && cs.locked.p1 === null) || (cs.pending.p2 !== null && cs.locked.p2 === null));
     ESA.SLOTS.forEach(function (slot) {
       var side = csSide(slot);
       var locked = cs.locked[slot] !== null;
       var pending = !locked && cs.pending[slot] !== null;
       var idx = locked ? cs.locked[slot] : (pending ? cs.pending[slot] : cs.cursor[slot]);
-      var c = cs.chars[idx];
+      var e = csEntry(idx);
       side.classList.toggle("is-locked", locked);
       side.classList.toggle("is-pending", pending);
       side.classList.toggle("is-turn", turn === slot);
-      if (!c) return;
+      side.classList.toggle("is-add", !!e && e.kind === "add");
+      side.classList.toggle("has-variants", !!e && e.kind === "char");
+      if (!e) return;
+      var stateEl = side.querySelector(".cs-state");
+      if (e.kind === "add") {
+        side.style.setProperty("--cc", "#e5a92f");
+        side.querySelector(".cs-name").textContent = "Add Guest";
+        side.querySelector(".cs-tagline").textContent = "Not on the roster? Create a fighter.";
+        stateEl.textContent = "Selecting";
+        side.querySelector(".cs-lock-word").textContent = "create";
+        return;
+      }
+      var c = csAvatar(slot, idx, locked || pending);
       side.style.setProperty("--cc", c.color);
       ESA.setArt(side.querySelector(".cs-art"), c, locked ? "selected" : "normal", "body");
-      side.querySelector(".cs-name").textContent = c.displayName;
+      setNameEl(side.querySelector(".cs-name"), c);
       side.querySelector(".cs-tagline").textContent = c.tagline || "";
       side.querySelector(".cs-ask-name").textContent = c.displayName;
-      side.querySelector(".cs-state").textContent = locked ? "Ready" : (pending ? "Confirm?" : "Selecting");
+      stateEl.textContent = locked ? "Ready" : (pending ? "Confirm?" : "Selecting");
       side.querySelector(".cs-lock-word").textContent = locked ? "change" : (pending ? "confirm" : "select");
+      if (e.kind === "char") {
+        Array.prototype.forEach.call(side.querySelectorAll(".cs-vbtn"), function (b) {
+          var v = b.getAttribute("data-v");
+          var taken = csTaken(slot, idx, v);
+          b.classList.toggle("is-on", cs.variant[slot] === v);
+          b.classList.toggle("is-taken", taken);
+          b.setAttribute("aria-pressed", cs.variant[slot] === v ? "true" : "false");
+          b.setAttribute("data-taken", taken ? other(slot).toUpperCase() : "");
+        });
+      }
     });
     var hint = byId("csTouchHint");
     if (hint) {
+      var pe = turn && csEntry(cs.pending[turn]);
       hint.innerHTML = !turn ? "Both fighters locked in!"
         : (cs.pending[turn] !== null
-            ? 'Tap <b>Confirm</b> to lock in <b class="t-' + turn + '">' + turn.toUpperCase() + "</b> &middot; or tap another fighter"
+            ? (pe && pe.kind === "char" ? "Pick <b>Normal</b> or <b>Evil</b>, then " : "Tap ") +
+              '<b>Confirm</b> to lock in <b class="t-' + turn + '">' + turn.toUpperCase() + "</b>"
             : 'Tap a fighter for <b class="t-' + turn + '">' + turn.toUpperCase() + "</b>" +
               (turn === "p1" ? ', then one for <b class="t-p2">P2</b>' : ""));
     }
   }
 
   function csMove(slot, dir) {
-    if (cs.locked[slot] !== null || !cs.chars.length) return;
+    if (cs.locked[slot] !== null || !cs.entries.length) return;
+    // While confirming a roster pick, up / down flips Normal <-> Evil.
+    var pe = csEntry(cs.pending[slot]);
+    if (pe && pe.kind === "char" && (dir === "up" || dir === "down")) {
+      csSetVariant(slot, cs.variant[slot] === "evil" ? "normal" : "evil");
+      return;
+    }
     var from = cs.pending[slot] !== null ? cs.pending[slot] : cs.cursor[slot];
-    var next = gridMove(from, dir, cs.chars.length, cs.cols);
+    var next = gridMove(from, dir, cs.entries.length, cs.cols);
     var hadPending = cs.pending[slot] !== null;
     cs.pending[slot] = null;               // moving away = Change
     if (next === cs.cursor[slot] && !hadPending) return;
@@ -367,11 +513,18 @@
 
   /** Step 1: highlight a fighter and ask for confirmation. Never locks. */
   function csSelect(slot, i) {
-    if (!cs.chars.length || cs.locked[slot] !== null) return;
-    var c = cs.chars[i];
-    if (!c) return;
-    if (c.slots.indexOf(slot) < 0) { ESA.Audio.play("denied"); return; }
+    var e = csEntry(i);
+    if (!e || cs.locked[slot] !== null) return;
+    if (e.kind === "add") { cs.cursor[slot] = i; csRender(); csAddGuest(slot); return; }
+    if (e.kind === "char" && e.c.slots.indexOf(slot) < 0) { ESA.Audio.play("denied"); return; }
+    if (e.kind === "guest" && csTaken(slot, i)) { ESA.Audio.play("denied"); replay(cs.tiles[i], "is-shake"); return; }
     var changed = cs.pending[slot] !== i || cs.cursor[slot] !== i;
+    if (e.kind === "char") {
+      var v = changed ? (cs.memory[slot][e.c.id] || "normal") : cs.variant[slot];
+      if (csTaken(slot, i, v)) v = v === "evil" ? "normal" : "evil";
+      if (csTaken(slot, i, v)) { ESA.Audio.play("denied"); return; }
+      cs.variant[slot] = v;
+    }
     cs.cursor[slot] = i;
     cs.pending[slot] = i;
     ESA.Audio.play("toggleOn");
@@ -380,19 +533,54 @@
     replay(csSide(slot).querySelector(".cs-confirm"), "is-in");
   }
 
+  /** Normal / Evil for the pending roster pick - before Confirm only. */
+  function csSetVariant(slot, v) {
+    var i = cs.pending[slot];
+    var e = csEntry(i);
+    if (!e || e.kind !== "char" || cs.locked[slot] !== null) return;
+    v = v === "evil" ? "evil" : "normal";
+    if (cs.variant[slot] === v) return;
+    if (csTaken(slot, i, v)) {
+      ESA.Audio.play("denied");
+      replay(csSide(slot).querySelector(".cs-variant"), "is-nudge");
+      return;
+    }
+    cs.variant[slot] = v;
+    cs.memory[slot][e.c.id] = v;
+    ESA.Audio.play(v === "evil" ? "toggleOn" : "uiMove");
+    csRender();
+    replay(csSide(slot).querySelector(".cs-portrait"), "is-swap");
+  }
+
   /** Step 2: Confirm turns the pending choice into a lock. */
   function csConfirm(slot) {
     if (App.state !== "charSelect" || cs.locked[slot] !== null || cs.pending[slot] === null) return;
-    var c = cs.chars[cs.pending[slot]];
-    if (!c || c.slots.indexOf(slot) < 0) { ESA.Audio.play("denied"); return; }
-    cs.locked[slot] = cs.pending[slot];
-    cs.cursor[slot] = cs.pending[slot];
+    var i = cs.pending[slot];
+    var e = csEntry(i);
+    if (!e || e.kind === "add") return;
+    if ((e.kind === "char" && e.c.slots.indexOf(slot) < 0) || csTaken(slot, i, cs.variant[slot])) {
+      ESA.Audio.play("denied");
+      return;
+    }
+    var p = e.kind === "guest" ? e.p : ESA.Participants.forVariant(e.c.id, cs.variant[slot]);
+    if (!p) { ESA.Audio.play("denied"); return; }
+    if (e.kind === "char") cs.memory[slot][e.c.id] = cs.variant[slot];
+    cs.locked[slot] = i;
+    cs.lockedPid[slot] = p.participantId;
+    cs.cursor[slot] = i;
     cs.pending[slot] = null;
     ESA.Audio.play("lockIn");
     var side = csSide(slot);
-    side.querySelector(".cs-lf-who").textContent = ESA.CONTROLS[slot].short + " · " + c.displayName;
+    side.querySelector(".cs-lf-who").textContent = ESA.CONTROLS[slot].short + " · " + p.displayName;
     replay(side, "just-locked");
     replay(side.querySelector(".cs-lockflash"), "is-on");
+
+    // The other side may be previewing the identity that was just taken.
+    var o = other(slot);
+    if (cs.pending[o] === i && csTaken(o, i, cs.variant[o])) {
+      if (e.kind === "char") cs.variant[o] = cs.variant[o] === "evil" ? "normal" : "evil";
+      else cs.pending[o] = null;
+    }
     csRender();
     csCheckReady();
   }
@@ -410,6 +598,7 @@
   function csUnlock(slot) {
     if (cs.locked[slot] === null) return;
     cs.locked[slot] = null;
+    cs.lockedPid[slot] = null;
     cs.pending[slot] = null;
     cs.readyGen++;                         // cancels a pending "both ready" advance
     byId("charSelectScreen").classList.remove("is-ready");
@@ -419,7 +608,7 @@
 
   /** Keyboard select key: select -> confirm, or unlock when already locked. */
   function csLockKey(slot) {
-    if (!cs.chars.length) return;
+    if (!cs.entries.length) return;
     if (cs.locked[slot] !== null) csUnlock(slot);
     else if (cs.pending[slot] !== null) csConfirm(slot);
     else csSelect(slot, cs.cursor[slot]);
@@ -435,13 +624,29 @@
     csSelect(slot, i);
   }
 
+  /** + Add Guest: create one, then preview them for this slot (still needs Confirm). */
+  function csAddGuest(slot) {
+    if (!ESA.Guests) return;
+    ESA.Guests.openCreator({
+      onDone: function (p) {
+        if (App.state !== "charSelect") return;
+        cs.entries = rosterEntries();
+        csBuildTiles();
+        for (var i = 0; i < cs.entries.length; i++) {
+          if (cs.entries[i].kind === "guest" && cs.entries[i].p === p) { csSelect(slot, i); break; }
+        }
+        csRender();
+      }
+    });
+  }
+
   function csCheckReady() {
     if (cs.locked.p1 === null || cs.locked.p2 === null) return;
     var gen = ++cs.readyGen;
     byId("charSelectScreen").classList.add("is-ready");
     App.timers.after(900, function () {
       if (gen !== cs.readyGen || App.state !== "charSelect") return;
-      App.session.setup = { p1: cs.chars[cs.locked.p1].id, p2: cs.chars[cs.locked.p2].id };
+      App.session.setup = { p1: cs.lockedPid.p1, p2: cs.lockedPid.p2 };
       App.go("vs");
     });
   }
@@ -459,26 +664,41 @@
       if (!dropped) App.go("mode");
     },
     enter: function () {
-      cs.chars = ESA.Characters.list();
+      cs.entries = rosterEntries();
       cs.locked.p1 = cs.locked.p2 = null;
+      cs.lockedPid.p1 = cs.lockedPid.p2 = null;
       cs.pending.p1 = cs.pending.p2 = null;
+      cs.variant.p1 = cs.variant.p2 = "normal";
+      cs.memory = { p1: {}, p2: {} };
       cs.readyGen++;
       byId("charSelectScreen").classList.remove("is-ready");
 
-      // Cursors start on the previous matchup (unlocked) or the first two.
+      // Cursors start on the previous matchup (unlocked) or the first two;
+      // a previous Evil pick is remembered as that slot's default variant.
       var prev = App.session.setup;
-      var find = function (id, fallback) {
-        for (var i = 0; i < cs.chars.length; i++) if (cs.chars[i].id === id) return i;
+      var find = function (ref, slot, fallback) {
+        var p = ref && ESA.Participants.resolve(ref);
+        if (!p) return fallback;
+        for (var i = 0; i < cs.entries.length; i++) {
+          var e = cs.entries[i];
+          if (p.type === "guest" && e.kind === "guest" && e.p === p) return i;
+          if (p.type === "roster" && e.kind === "char" && e.c.id === p.characterId) {
+            cs.memory[slot][e.c.id] = p.variant;
+            return i;
+          }
+        }
         return fallback;
       };
-      cs.cursor.p1 = prev ? find(prev.p1, 0) : 0;
-      cs.cursor.p2 = prev ? find(prev.p2, Math.min(1, cs.chars.length - 1)) : Math.min(1, cs.chars.length - 1);
+      var second = Math.min(1, ESA.Characters.count() - 1);
+      cs.cursor.p1 = prev ? find(prev.p1, "p1", 0) : 0;
+      cs.cursor.p2 = prev ? find(prev.p2, "p2", second) : second;
 
-      csBuild();
+      csBuildSides();
+      csBuildTiles();
       csRender();
     },
     onResize: function () {
-      cs.cols = sizeRoster(byId("csRoster"), byId("csRoster").parentNode, cs.chars.length, null, { label: 40 });
+      cs.cols = sizeRoster(byId("csRoster"), byId("csRoster").parentNode, cs.entries.length, null, { label: 40, edge: 14 });
     },
     onKey: function (code) {
       var p1 = ESA.CONTROLS.p1.select, p2 = ESA.CONTROLS.p2.select;
@@ -498,11 +718,18 @@
   /* ================================================================== *
    * VS PRESENTATION
    * ================================================================== */
+  /** A matchup side's name as safe HTML (EVIL styled; mirror labels kept). */
+  function whoNameHTML(who) {
+    if (who.participant && who.name === who.participant.displayName) return ESA.nameHTML(who.participant);
+    return esc(who.name);
+  }
+  ESA.whoNameHTML = whoNameHTML;
+
   function vsHalf(who, slot) {
     var c = who.character;
     return '<div class="vs-art-wrap art-box">' + ESA.bodyArtHTML(c, "selected", "vs-art") + "</div>" +
            '<div class="vs-plate"><span class="vs-slot">' + ESA.CONTROLS[slot].short + "</span>" +
-           '<span class="vs-name">' + esc(who.name) + "</span></div>";
+           '<span class="vs-name">' + whoNameHTML(who) + "</span></div>";
   }
 
   function vsContinue() {
@@ -523,6 +750,8 @@
       p2.innerHTML = vsHalf(who.p2, "p2");
       p1.style.setProperty("--cc", who.p1.color);
       p2.style.setProperty("--cc", who.p2.color);
+      p1.classList.toggle("is-evil", !!who.p1.character.evil);
+      p2.classList.toggle("is-evil", !!who.p2.character.evil);
       replay(byId("vsScreen"), "is-playing");
     },
     afterEnter: function () {
@@ -660,10 +889,10 @@
     return '' +
       '<span class="mu-side p1" style="--cc:' + esc(who.p1.color) + '">' +
         '<span class="mu-face">' + portraitImg(who.p1.character) + "</span>" +
-        '<span class="mu-name"><small>P1</small>' + esc(who.p1.name) + "</span></span>" +
+        '<span class="mu-name"><small>P1</small>' + whoNameHTML(who.p1) + "</span></span>" +
       '<span class="mu-vs">VS</span>' +
       '<span class="mu-side p2" style="--cc:' + esc(who.p2.color) + '">' +
-        '<span class="mu-name"><small>P2</small>' + esc(who.p2.name) + "</span>" +
+        '<span class="mu-name"><small>P2</small>' + whoNameHTML(who.p2) + "</span>" +
         '<span class="mu-face">' + portraitImg(who.p2.character) + "</span></span>";
   }
 
@@ -762,7 +991,7 @@
         html += '<div class="ctrl" style="--pc:' + esc(w.color) + '">' +
                   '<span class="ctrl-face">' + portraitImg(w.character) + "</span>" +
                   '<span class="ctrl-text"><span class="ctrl-slot">' + ESA.CONTROLS[slot].short + "</span>" +
-                  '<span class="ctrl-name">' + esc(w.name) + "</span></span>" +
+                  '<span class="ctrl-name">' + whoNameHTML(w) + "</span></span>" +
                   '<span class="ctrl-keys desk-only">' + capsHTML(slot, g.controls) + "</span>" +
                   '<span class="ctrl-touch touch-only">' + touchSummaryHTML(g) +
                     '<span class="tside">' + (slot === "p1" ? "Left side" : "Right side") + "</span></span>" +

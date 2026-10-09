@@ -16,6 +16,13 @@
 
    SCORING   win 3 · tie 1 · loss 0 · bye 3
    TIEBREAK  points -> wins -> score differential -> drawn lots
+
+   IDENTITY  Every id in here is a PARTICIPANT id (js/participants.js),
+             never a character id - Normal Zima and Evil Zima are two
+             separate players with separate records. Up to
+             MAX_PARTICIPANTS (25) per tournament; the format above already
+             scales to that (verified 2-25: no self-pairing, no double
+             booking, no league rematches beyond the 2-player case).
    ========================================================================== */
 
 (function (root) {
@@ -24,6 +31,7 @@
   var ESA = root.ESA = root.ESA || {};
 
   var POINTS = { win: 3, draw: 1, loss: 0, bye: 3 };
+  var MAX_PARTICIPANTS = 25;
   var KO_NAMES = { 8: "Quarterfinals", 4: "Semifinals", 2: "The Final" };
 
   function shuffle(arr, rng) {
@@ -70,7 +78,7 @@
    * ================================================================== */
 
   /**
-   * @param {string[]} participants  character ids, no duplicates
+   * @param {string[]} participants  participant ids, no duplicates (max 25)
    * @param {object}   opts          { gamePool: () => string[], rng: () => number }
    */
   function Tournament(participants, opts) {
@@ -83,6 +91,7 @@
 
     this.format = formatFor(ids.length);
     if (!this.format) throw new Error("A tournament needs at least 2 participants.");
+    if (ids.length > MAX_PARTICIPANTS) throw new Error("A tournament holds at most " + MAX_PARTICIPANTS + " participants.");
 
     this.rng = opts.rng || Math.random;
     this.gamePool = opts.gamePool || function () { return []; };
@@ -459,6 +468,7 @@
   ESA.Tournament.formatFor = formatFor;
   ESA.Tournament.seedOrder = seedOrder;
   ESA.Tournament.POINTS = POINTS;
+  ESA.Tournament.MAX_PARTICIPANTS = MAX_PARTICIPANTS;
 
   if (typeof module !== "undefined" && module.exports) module.exports = Tournament;
 

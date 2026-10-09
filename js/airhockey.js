@@ -138,7 +138,7 @@
   AirHockey.prototype.adapter = function (p) {
     var self = this;
     return {
-      id: p.character.id,
+      id: p.character.baseId || p.character.id,   // base roster id: Evil Zima excludes Zima cameos
       color: p.color,
       getAnchor: function () {
         var h = p.spriteH * self.visualScale(p);

@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="css/arcade.css" />
   <link rel="stylesheet" href="css/menus.css" />
   <link rel="stylesheet" href="css/tournament.css" />
+  <link rel="stylesheet" href="css/participants.css" />
   <link rel="stylesheet" href="css/touch.css" />
 </head>
 <body>
@@ -154,7 +155,7 @@
             <span class="mc-screen"><svg viewBox="0 0 100 100"><use href="#icoVersus" /></svg></span>
             <span class="mc-lines">
               <span>Quick local matches</span>
-              <span>Choose 2 characters</span>
+              <span>Choose 2 fighters &middot; Normal, Evil or Guest</span>
               <span>Play any machine</span>
             </span>
             <span class="mc-cta" data-touch-text="▶ Tap to choose">&#9654; Press Enter</span>
@@ -335,19 +336,24 @@
           <h2 class="screen-title">Who&rsquo;s Playing?</h2>
           <span class="px-arrow right" aria-hidden="true"></span>
         </header>
-        <p class="screen-sub">Select every ESA member physically here for the championship.</p>
+        <p class="screen-sub">Select everyone physically here &mdash; pick <b>Normal</b> or <b>Evil</b> for each fighter, and add <b>Guests</b> for anyone else.</p>
         <div class="ps-roster-wrap"><div class="ps-roster" id="psRoster"></div></div>
         <div class="ps-note hidden" id="psNote"></div>
+        <div class="ps-picked-wrap">
+          <span class="ps-picked-label">In the tournament</span>
+          <div class="ps-picked" id="psPicked" aria-live="polite"></div>
+        </div>
         <div class="ps-bar">
-          <div class="ps-count"><b id="psCount">0</b><span id="psCountLabel">Players selected</span></div>
+          <div class="ps-count" id="psCountBox"><span class="ps-count-label">Selected</span><b><span id="psCount">0</span><i> / </i><span id="psMax">25</span></b></div>
           <div class="ps-format" id="psFormat"></div>
           <div class="ps-actions">
+            <button class="btn btn-ghost btn-small hidden" id="psClearGuestsBtn" type="button">Clear Guests</button>
             <button class="btn btn-ghost btn-small" id="psAllBtn" type="button">Select All</button>
             <button class="btn btn-gold" id="psStartBtn" type="button">Start Tournament <span class="kbd-hint">Enter</span></button>
           </div>
         </div>
-        <p class="nav-hint"><b>Arrows</b> move &middot; <b>Space</b> toggle &middot; <b>Enter</b> start &middot; <b>Esc</b> back</p>
-        <p class="touch-hint touch-only">Tap everyone who is playing, then Start</p>
+        <p class="nav-hint"><b>Arrows</b> move &middot; <b>Space</b> choose &middot; <b>N</b> / <b>E</b> normal / evil &middot; <b>G</b> add guest &middot; <b>Enter</b> start &middot; <b>Esc</b> back</p>
+        <p class="touch-hint touch-only">Tap a fighter for Normal / Evil &middot; + Add Guest for anyone else &middot; then Start</p>
       </div>
     </section>
 
@@ -527,6 +533,9 @@
   <!-- Plain scripts, not modules: this must keep working from file:// -->
   <script src="js/core.js"></script>
   <script src="js/characters.js"></script>
+  <script src="js/participants.js"></script>
+  <script src="js/variants.js"></script>
+  <script src="js/guests.js"></script>
   <script src="js/controls.js"></script>
   <script src="js/registry.js"></script>
   <script src="js/arena.js"></script>

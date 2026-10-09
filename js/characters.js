@@ -12,6 +12,16 @@
 
    Controls belong to the PLAYER SLOT (P1 / P2), never to a character, so
    any character can be played on either side of the keyboard.
+
+   CHARACTERS ARE NOT PARTICIPANTS
+   -------------------------------
+   A character is permanent roster ART. Who is actually playing is a
+   PARTICIPANT (js/participants.js): a roster character in its Normal or
+   Evil variant, or a temporary Guest. Every sprite / geometry helper below
+   takes an AVATAR KEY ("zima", "zima~evil", "guest~participant-07") and
+   resolves it through ESA.Avatars, so games never need to know which kind
+   of participant they are drawing. Gameplay geometry always comes from
+   the base art, so variants can never change a collider.
    ========================================================================== */
 
 (function (ESA) {
@@ -98,6 +108,35 @@
     };
   }
 
+  /**
+   * Optional Evil-variant eye anchors, in IMAGE-FILE pixels, per art state:
+   *   evil: {
+   *     normal: { r: 15, eyes: [[x, y], [x, y, 0.6]] },          // visible eyes
+   *     hurt:   { r: 14, lens: [[cx, cy, rx, ry], ...], eyes: [...] } // glasses
+   *   }
+   * eyes  [x, y, intensity?]  pupil centres; intensity < 1 for a closed /
+   *                           squinting eye (a dim ember instead of a glare).
+   * lens  [cx, cy, rx, ry]    glasses lenses: a red glow THROUGH the glass,
+   *                           with the pupils (eyes) burning inside it.
+   * r     pupil glow radius in file pixels.
+   * A state with no data falls back to a conservative eye-line glow (see
+   * js/variants.js) and is reported in the console as needing tuning.
+   * Check anchors with index.html?eyes (dev only).
+   */
+  function normaliseEyes(e) {
+    if (!e) return null;
+    var out = {};
+    ["normal", "hurt"].forEach(function (k) {
+      var s = e[k];
+      if (!s) return;
+      var pts = function (list, n) {
+        return (list || []).filter(function (p) { return p && p.length >= n; }).map(function (p) { return p.slice(); });
+      };
+      out[k] = { r: Number(s.r) || 14, eyes: pts(s.eyes, 2), lens: pts(s.lens, 4) };
+    });
+    return out;
+  }
+
   ESA.Characters = {
     /**
      * Register an ESA member. Required: id, displayName, art.normal, art.hurt.
@@ -123,6 +162,10 @@
      *   victoryAnimation  optional CSS class applied on the champion screen
      *   ui            optional menu-art tuning { scale, offsetX, offsetY }
      *                 (presentation only - see normaliseUi)
+     *   evil          optional Evil-variant eye anchors (see normaliseEyes).
+     *                 Every character automatically gets an Evil variant
+     *                 built from these SAME image files - never add
+     *                 evil_*.png assets.
      */
     register: function (def) {
       if (!def || !def.id || registry[def.id]) {
@@ -149,8 +192,15 @@
         tagline: def.tagline || "",
         victoryAnimation: def.victoryAnimation || null,
         trim: normaliseTrim(def.trim),
-        ui: normaliseUi(def.ui)
+        ui: normaliseUi(def.ui),
+        evilEyes: normaliseEyes(def.evil)
       };
+      // Avatar fields (see js/participants.js). A registry entry IS the
+      // Normal-variant avatar; Evil avatars inherit from it.
+      c.baseId = c.id;
+      c.variant = "normal";
+      c.evil = false;
+      c.isGuest = false;
       // Explicit sprite names for gameplay code.
       c.normalSprite = c.art.normal;
       c.hurtSprite = c.art.hurt;
@@ -185,6 +235,10 @@
     color: "#2f7fd8",
     colorDeep: "#15497f",
     spriteH: 126,
+    evil: {
+      normal: { r: 15, eyes: [[183, 285], [318, 275]] },
+      hurt:   { r: 14, eyes: [[205, 300, 0.55], [335, 233]] }
+    },
     tagline: "Founding member. Refuses to lose."
   });
 
@@ -196,6 +250,10 @@
     color: "#9560ac",
     colorDeep: "#5d3570",
     spriteH: 122,
+    evil: {   // glasses in the normal art; they fly off in the hurt art
+      normal: { r: 13, lens: [[265, 252, 60, 48], [418, 232, 52, 44]], eyes: [[290, 243], [418, 224]] },
+      hurt:   { r: 13, eyes: [[228, 240, 0.55], [352, 178]] }
+    },
     tagline: "Calm, collected, dangerous."
   });
 
@@ -207,6 +265,10 @@
     color: "#7b6cf0",
     colorDeep: "#3e3486",
     spriteH: 124,
+    evil: {
+      normal: { r: 15, eyes: [[495, 428], [627, 406]] },
+      hurt:   { r: 14, eyes: [[405, 530, 0.55], [522, 470]] }
+    },
     tagline: "Hands up. Already warmed up."
   });
 
@@ -218,6 +280,10 @@
     color: "#2fb39a",
     colorDeep: "#16614f",
     spriteH: 124,
+    evil: {   // clear-framed glasses
+      normal: { r: 16, lens: [[455, 385, 72, 50], [655, 352, 70, 48]], eyes: [[478, 374], [642, 343]] },
+      hurt:   { r: 14, lens: [[220, 380, 75, 55], [410, 320, 70, 50]], eyes: [[232, 378, 0.5], [400, 318, 0.5]] }
+    },
     tagline: "Sees every move coming."
   });
 
@@ -229,6 +295,10 @@
     color: "#c28a57",
     colorDeep: "#6b4524",
     spriteH: 126,
+    evil: {   // wire glasses, three-quarter view
+      normal: { r: 11, lens: [[590, 238, 40, 30], [672, 272, 34, 30]], eyes: [[583, 240], [658, 268]] },
+      hurt:   { r: 12, lens: [[340, 305, 42, 32], [432, 262, 38, 30]], eyes: [[355, 308], [420, 270, 0.55]] }
+    },
     tagline: "Distinguished. Dangerously relaxed."
   });
 
@@ -240,6 +310,10 @@
     color: "#e8b04a",
     colorDeep: "#7a5612",
     spriteH: 124,
+    evil: {
+      normal: { r: 13, eyes: [[466, 302], [574, 290]] },
+      hurt:   { r: 13, eyes: [[272, 697], [367, 688]] }
+    },
     tagline: "Marketing VP. Runs on iced ideas."
   });
 
@@ -251,6 +325,10 @@
     color: "#4fb7e6",
     colorDeep: "#1d5f7e",
     spriteH: 124,
+    evil: {   // round wire glasses
+      normal: { r: 13, lens: [[405, 333, 45, 38], [562, 312, 46, 38]], eyes: [[420, 330], [555, 308]] },
+      hurt:   { r: 13, lens: [[355, 515, 50, 40], [548, 488, 50, 42]], eyes: [[355, 520, 0.55], [550, 490]] }
+    },
     tagline: "Number one. Nothing gets past."
   });
 
@@ -262,6 +340,10 @@
     color: "#e8584f",
     colorDeep: "#7e211b",
     spriteH: 124,
+    evil: {
+      normal: { r: 12, eyes: [[447, 272], [515, 238]] },
+      hurt:   { r: 13, eyes: [[451, 380], [575, 410]] }
+    },
     tagline: "Helmet on. Full throttle."
   });
 
@@ -273,6 +355,10 @@
     color: "#ff8fb1",
     colorDeep: "#8a3552",
     spriteH: 124,
+    evil: {
+      normal: { r: 14, eyes: [[466, 278], [580, 234]] },
+      hurt:   { r: 14, eyes: [[300, 525, 0.55], [462, 480]] }
+    },
     tagline: "Six. Seven. Gone."
   });
 
@@ -303,11 +389,20 @@
    * Source rectangle of the visible art inside the image file.
    * Falls back to the whole loaded image when no trim data exists.
    */
+  /** Avatar for a key ("zima", "zima~evil", "guest~...") or a character object. */
+  function vis(key) {
+    if (key && typeof key === "object") return key;
+    return ESA.Avatars ? ESA.Avatars.get(key) : ESA.Characters.get(key);
+  }
+  ESA.visualOf = vis;
+
   ESA.spriteBox = function (charId, hurt) {
-    var c = ESA.Characters.get(charId);
+    var c = vis(charId);
     var t = c && c.trim && c.trim[hurt ? "hurt" : "normal"];
     if (t) return t;
-    var img = ESA.Assets.get(charId + (hurt ? "_hurt" : "_normal"));
+    // Geometry always comes from the BASE art (an Evil variant measures
+    // exactly like its Normal self).
+    var img = ESA.Assets.get(((c && c.baseId) || charId) + (hurt ? "_hurt" : "_normal"));
     var w = (img && img.width) || 100, h = (img && img.height) || 100;
     return { x: 0, y: 0, w: w, h: h, fileW: w, fileH: h };
   };
@@ -320,7 +415,7 @@
    * to the same height instead.
    */
   ESA.spriteSize = function (charId, hurt, height) {
-    var c = ESA.Characters.get(charId);
+    var c = vis(charId);
     height = height || (c ? c.spriteH : 124);
     var n = ESA.spriteBox(charId, false);
     if (!hurt) return { w: n.w * (height / n.h), h: height, box: n };
@@ -376,6 +471,11 @@
     return { x: x, y: y, side: side };
   }
 
+  /** Square head crop (file pixels) of a character's normal art, or null. */
+  ESA.headCrop = function (c) {
+    return c && c.trim ? headCrop(c, c.trim.normal) : null;
+  };
+
   /** Inline style for an <img> filling a square overflow:hidden box. */
   ESA.headStyle = function (c) {
     if (!c || !c.trim) return "width:100%;height:100%;object-fit:cover;object-position:" + (c ? c.portraitFocus : "center");
@@ -417,8 +517,11 @@
   ESA.bodyArtHTML = function (c, which, cls, attrs) {
     var f = ESA.bodyFrame(c, which);
     var q = function (s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); };
-    return '<span class="art-frame ' + q(cls || "") + '" style="' + q(f.frame) + '"' + (attrs || "") + '>' +
-           '<img class="art-img" src="' + q(artSrc(c, which)) + '" alt="" draggable="false" style="' + q(f.img) + '" /></span>';
+    var V = ESA.Variants;
+    var evil = !!(c && c.evil);
+    return '<span class="art-frame ' + q(cls || "") + (evil ? " is-evil" : "") + '" style="' + q(f.frame) + '"' + (attrs || "") + '>' +
+           '<img class="art-img" src="' + q(artSrc(c, which)) + '" alt="" draggable="false" style="' + q(f.img) + '" />' +
+           (evil && V ? V.bodyOverlayHTML(c, which) : "") + "</span>";
   };
 
   /** Point an existing <img> (or .art-frame) at a character's art in a given framing. */
@@ -430,6 +533,7 @@
       img.setAttribute("style", f.frame);
       if (inner.getAttribute("src") !== artSrc(c, which)) inner.setAttribute("src", artSrc(c, which));
       inner.setAttribute("style", f.img);
+      if (ESA.Variants) ESA.Variants.decorate(img, c, which, "body");
       return;
     }
     var src = which === "hurt" ? c.art.hurt : which === "victory" ? c.art.victory
@@ -437,25 +541,11 @@
     if (img.getAttribute("src") !== src) img.setAttribute("src", src);
     var trimKey = which === "hurt" ? "hurt" : "normal";
     img.setAttribute("style", framing === "head" ? ESA.headStyle(c) : ESA.bodyStyle(c, trimKey));
+    if (framing === "head" && ESA.Variants) ESA.Variants.decorate(img, c, which, "head");
   };
 
-  /**
-   * Resolves who is playing a match. In a mirror match (same character on
-   * both sides) the labels gain P1/P2 and P2 takes the slot colour so the
-   * two can always be told apart.
-   */
-  ESA.describeMatchup = function (setup) {
-    var c1 = ESA.Characters.get(setup.p1);
-    var c2 = ESA.Characters.get(setup.p2);
-    var mirror = c1 && c2 && c1.id === c2.id;
-    return {
-      mirror: mirror,
-      p1: { slot: "p1", character: c1, name: mirror ? c1.displayName + " P1" : c1.displayName,
-            color: c1.color },
-      p2: { slot: "p2", character: c2, name: mirror ? c2.displayName + " P2" : c2.displayName,
-            color: mirror ? ESA.CONTROLS.p2.color : c2.color }
-    };
-  };
+  /* ESA.describeMatchup (who is playing a match) lives in js/participants.js:
+     setups carry PARTICIPANT ids, which it resolves to a name + avatar. */
 
   /* ------------------------------------------------------------------ *
    * Player factory
@@ -467,7 +557,8 @@
     opts = opts || {};
     return {
       slot: who.slot,
-      character: who.character,
+      participantId: who.participantId || null,
+      character: who.character,         // resolved avatar (visual only)
       name: who.name,
       color: who.color,
       controls: ESA.CONTROLS[who.slot].move,
@@ -572,11 +663,17 @@
    */
   ESA.drawSprite = function (ctx, charId, hurt, cx, cy, o) {
     o = o || {};
-    var img = ESA.Assets.get(charId + (hurt ? "_hurt" : "_normal"));
+    var c = vis(charId);
+    // Evil variants and Guests draw from a pre-rendered, cached canvas
+    // (built ONCE per base asset / state - never per frame). Normal
+    // characters draw their PNG exactly as before.
+    var src = c && ESA.Variants ? ESA.Variants.source(c, hurt) : null;
+    var img = src ? src.img : ESA.Assets.get(((c && c.baseId) || charId) + (hurt ? "_hurt" : "_normal"));
     if (!img || !img.width) return;
 
     // Only the visible part of the file is drawn (transparent padding is
-    // skipped), scaled so the NORMAL art stands `height` px tall.
+    // skipped), scaled so the NORMAL art stands `height` px tall. Size
+    // always comes from the base art, so variants never change it.
     var size = ESA.spriteSize(charId, hurt, o.height);
     var b = size.box;
     var w = size.w, h = size.h;
@@ -588,7 +685,15 @@
     ctx.translate(cx, cy - (o.bounce || 0));
     if (o.rotate) ctx.rotate(o.rotate);
     ctx.scale(o.flip ? -sx : sx, sy);
-    ctx.drawImage(img, b.x, b.y, b.w, b.h, -w / 2, -h, w, h);
+    if (src) {
+      // The cached canvas covers file space from (fx0, fy0) at k canvas px
+      // per file px (with room for the Evil aura around the visible box).
+      var s = w / b.w;
+      ctx.drawImage(img, -w / 2 + (src.fx0 - b.x) * s, -h + (src.fy0 - b.y) * s,
+                    img.width / src.k * s, img.height / src.k * s);
+    } else {
+      ctx.drawImage(img, b.x, b.y, b.w, b.h, -w / 2, -h, w, h);
+    }
     ctx.restore();
   };
 
@@ -696,27 +801,43 @@
 
     /* --- Name plate -------------------------------------------------- */
     if (opts.nameplate !== false) {
+      // Evil variants: "EVIL" in crimson ahead of the base name, on a
+      // darker plate - same shape, so the HUD rhythm never changes.
+      var evil = !!p.character.evil;
       var label = p.name.toUpperCase();
+      var lead = evil && label.indexOf("EVIL ") === 0 ? "EVIL " : "";
+      var rest = lead ? label.slice(lead.length) : label;
       ctx.save();
       ctx.font = "700 13px " + ESA.FONT_DISPLAY;
-      var tw = ctx.measureText(label).width;
+      if (lead) ctx.letterSpacing = "1px";      // measured with spacing: drawn in two parts
+      var lw = lead ? ctx.measureText(lead).width : 0;
+      var tw = lw + ctx.measureText(rest).width;
       var pw = tw + 22;
       var py = p.y + 9;
 
       ctx.globalAlpha = 0.92;
       ESA.roundRect(ctx, p.x - pw / 2, py, pw, 21, 10);
-      ctx.fillStyle = "rgba(7,23,40,.88)";
+      ctx.fillStyle = evil ? "rgba(22,4,14,.92)" : "rgba(7,23,40,.88)";
       ctx.fill();
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = p.color;
       ctx.stroke();
 
       ctx.globalAlpha = 1;
-      ctx.fillStyle = "#fff6e4";
-      ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.letterSpacing = "1px";
-      ctx.fillText(label, p.x, py + 11);
+      if (lead) {
+        var x0 = p.x - tw / 2;
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#ff4d5e";
+        ctx.fillText(lead, x0, py + 11);
+        ctx.fillStyle = "#fff6e4";
+        ctx.fillText(rest, x0 + lw, py + 11);
+      } else {
+        ctx.fillStyle = "#fff6e4";
+        ctx.textAlign = "center";
+        ctx.fillText(label, p.x, py + 11);
+      }
       ctx.restore();
     }
   };

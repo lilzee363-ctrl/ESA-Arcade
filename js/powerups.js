@@ -24,7 +24,7 @@
 
    PLAYER ADAPTER (the game owns its players; the session only asks)
    --------------
-     id                     character id (cameo exclusion)
+     id                     BASE character id (cameo exclusion; guests: any)
      color                  identity colour (status pills)
      getAnchor()            -> { x, y, top }  collider centre + sprite top
      getReach()             -> pickup touch radius (current collider)

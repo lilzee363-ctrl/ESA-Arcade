@@ -370,6 +370,15 @@ window.ESA = window.ESA || {};
 
       window.addEventListener("keydown", function (e) {
         if (e.repeat) return;
+        // Typing in a text field (Guest nickname) stays typing: only
+        // Escape / Enter reach the app, and nothing is blocked or held.
+        var t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
+          if (e.code === "Escape" || e.code === "Enter" || e.code === "NumpadEnter") {
+            if (self.onPress) self.onPress(e.code, e);
+          }
+          return;
+        }
         if (self._shouldBlock(e.code)) e.preventDefault();
         self.held[e.code] = true;
         if (self.onPress) self.onPress(e.code, e);

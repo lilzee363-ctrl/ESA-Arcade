@@ -8,7 +8,9 @@
    -----------------
    1. Write js/yourgame.js with a constructor  function YourGame(api, setup)
       exposing start(), update(dt, now), draw(ctx, now), destroy() and an
-      optional onKeyDown(code). `setup` is { p1: characterId, p2: characterId }.
+      optional onKeyDown(code). `setup` is { p1: participantId, p2: participantId };
+      call ESA.describeMatchup(setup) to get each side's name, colour and
+      resolved avatar (who.character) - draw it with ESA.drawSprite.
       When the match ends call api.endMatch(result) ONCE, where result is
         { winner: "p1" | "p2" | null, scores: { p1, p2 }, kicker, title, text }
    2. At the bottom of that file call ESA.Games.register({...}).

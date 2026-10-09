@@ -19,8 +19,11 @@
   var portraitImg = ESA.portraitImg;
 
   function T() { return App.session.tournament; }
-  function char(id) { return ESA.Characters.get(id); }
-  function name(id) { var c = char(id); return c ? c.displayName : id; }
+  // Every id in a tournament (fixtures, standings, byes, bracket, champion)
+  // is a PARTICIPANT id - never a character id.
+  function av(id) { return ESA.Participants.avatar(id); }
+  function name(id) { var p = ESA.Participants.get(id); return p ? p.displayName : "?"; }
+  function nameHTML(id) { return ESA.nameHTML(id) || "?"; }
   function gameOf(id) { return ESA.Games.get(id); }
 
   /** Bail out to Mode Select if a screen is opened without a tournament. */
@@ -31,7 +34,7 @@
   }
 
   function face(id, cls) {
-    var c = char(id);
+    var c = av(id);
     if (!c) return '<span class="t-face ' + (cls || "") + '"></span>';
     return '<span class="t-face ' + (cls || "") + '" style="--cc:' + esc(c.color) + '">' + portraitImg(c) + "</span>";
   }
@@ -85,7 +88,7 @@
                "<th>P</th><th>W</th><th>D</th><th>L</th><th>+/-</th><th>Pts</th></tr></thead><tbody>";
     rows.forEach(function (r, i) {
       html += '<tr class="' + (i < q ? "is-q" : "") + (i === q - 1 ? " q-edge" : "") + '">' +
-              "<td>" + (i + 1) + '</td><td class="l">' + face(r.id, "sm") + "<span>" + esc(name(r.id)) + "</span></td>" +
+              "<td>" + (i + 1) + '</td><td class="l">' + face(r.id, "sm") + "<span>" + nameHTML(r.id) + "</span></td>" +
               "<td>" + r.played + "</td><td>" + r.wins + "</td><td>" + r.draws + "</td><td>" + r.losses + "</td>" +
               "<td>" + (r.diff > 0 ? "+" : "") + r.diff + '</td><td class="pts">' + r.points + "</td></tr>";
     });
@@ -109,91 +112,217 @@
 
     function entrantLine(m, id, score) {
       var cls = m.status === "done" ? (m.winner === id ? "is-winner" : "is-loser") : "";
-      return '<div class="mini-ko-line ' + cls + '">' + face(id, "xs") + "<span>" + esc(name(id)) +
+      return '<div class="mini-ko-line ' + cls + '">' + face(id, "xs") + "<span>" + nameHTML(id) +
              "</span><b>" + (m.status === "done" ? score : "") + "</b></div>";
     }
   }
 
   /* ================================================================== *
-   * PARTICIPANT SELECT
+   * PARTICIPANT SELECT - up to MAX_ACTIVE (25) distinct participants.
+   *   roster tile   -> Normal / Evil sheet (each variant added separately)
+   *   guest tile    -> toggles that guest
+   *   + Add Guest   -> guest creator; the new guest joins the selection
+   * The selection is an ordered list of PARTICIPANT ids - the tournament's
+   * only notion of identity.
    * ================================================================== */
-  var ps = { chars: [], selected: Object.create(null), focus: 0, cols: 1, tiles: [] };
+  var ps = { entries: [], selected: [], focus: 0, cols: 1, tiles: [] };
 
-  function psSelectedIds() {
-    return ps.chars.filter(function (c) { return ps.selected[c.id]; }).map(function (c) { return c.id; });
+  function MAX() { return ESA.Participants.MAX_ACTIVE; }
+  function psHas(pid) { return ps.selected.indexOf(pid) >= 0; }
+  function psFull() { return ps.selected.length >= MAX(); }
+
+  /** Selected participant (if any) for a roster variant. */
+  function psVariantPid(charId, v) {
+    var p = ESA.Participants.findVariant(charId, v);
+    return p && psHas(p.participantId) ? p.participantId : null;
+  }
+
+  /** Feedback when the roster is full (participant 26 never gets in). */
+  function psFullFeedback(target) {
+    ESA.Audio.play("denied");
+    var note = byId("psNote");
+    note.textContent = "Roster full — " + MAX() + " / " + MAX() + " players. Remove someone to add another.";
+    note.classList.remove("hidden");
+    note.classList.add("is-full");
+    ESA.replayAnim(byId("psCountBox"), "is-shake");
+    if (target) ESA.replayAnim(target, "is-shake");
+  }
+
+  /** Adds / removes a participant. Returns false if the roster is full. */
+  function psToggle(pid, target) {
+    var i = ps.selected.indexOf(pid);
+    if (i >= 0) {
+      ps.selected.splice(i, 1);
+      ESA.Audio.play("toggleOff");
+    } else {
+      if (psFull()) { psFullFeedback(target); return false; }
+      ps.selected.push(pid);
+      ESA.Audio.play("toggleOn");
+    }
+    psRender();
+    return true;
+  }
+
+  function psToggleVariant(charId, v, target) {
+    var p = ESA.Participants.forVariant(charId, v);
+    return p ? psToggle(p.participantId, target) : false;
   }
 
   function psBuild() {
     var host = byId("psRoster");
     host.innerHTML = "";
-    ps.tiles = ps.chars.map(function (c, i) {
-      var b = document.createElement("button");
-      b.type = "button";
-      b.className = "ps-tile";
-      b.style.setProperty("--i", i);
-      b.style.setProperty("--cc", c.color);
-      b.innerHTML = '<span class="ps-tile-img">' + portraitImg(c) + "</span>" +
-                    '<span class="ps-tile-name">' + esc(c.displayName) + "</span>" +
-                    '<span class="ps-check" aria-hidden="true"></span>';
-      b.addEventListener("click", function () { ps.focus = i; psToggle(i); });
+    ps.tiles = ps.entries.map(function (e, i) {
+      var b = ESA.rosterTile(e, i, "ps");
+      if (e.kind === "char") {
+        b.insertAdjacentHTML("beforeend",
+          '<span class="ps-vars" aria-hidden="true"><i class="pv-n">N</i><i class="pv-e">E</i></span>');
+      }
+      if (e.kind !== "add") b.insertAdjacentHTML("beforeend", '<span class="ps-check" aria-hidden="true"></span>');
+      b.addEventListener("click", function () { ps.focus = i; psActivate(i); });
       host.appendChild(b);
       return b;
     });
-    ps.cols = ESA.sizeRoster(host, host.parentNode, ps.chars.length, null, { max: 180 });
+    ps.cols = ESA.sizeRoster(host, host.parentNode, ps.entries.length, null, { max: 180 });
+  }
+
+  function psActivate(i) {
+    var e = ps.entries[i];
+    if (!e) return;
+    if (e.kind === "char") openVariantSheet(e.c);
+    else if (e.kind === "guest") psToggle(e.p.participantId, ps.tiles[i]);
+    else psAddGuest();
+  }
+
+  function psAddGuest() {
+    if (psFull()) { psFullFeedback(ps.tiles[ps.tiles.length - 1]); return; }
+    ESA.Guests.openCreator({
+      onDone: function (p) {
+        if (App.state !== "participants") return;
+        ps.entries = ESA.rosterEntries();
+        if (!psFull() && !psHas(p.participantId)) ps.selected.push(p.participantId);
+        psBuild();
+        psRender();
+      }
+    });
   }
 
   function psRender() {
+    // Drop anything that no longer exists (e.g. guests cleared).
+    ps.selected = ps.selected.filter(function (pid) {
+      var p = ESA.Participants.get(pid);
+      return p && !p.removed;
+    });
     ps.tiles.forEach(function (t, i) {
-      var on = !!ps.selected[ps.chars[i].id];
+      var e = ps.entries[i];
+      var on = false;
+      if (e.kind === "char") {
+        var n = !!psVariantPid(e.c.id, "normal"), v = !!psVariantPid(e.c.id, "evil");
+        t.classList.toggle("has-normal", n);
+        t.classList.toggle("has-evil", v);
+        on = n || v;
+      } else if (e.kind === "guest") {
+        on = psHas(e.p.participantId);
+      }
       t.classList.toggle("is-on", on);
       t.classList.toggle("is-focus", i === ps.focus);
-      t.setAttribute("aria-pressed", on ? "true" : "false");
+      if (e.kind !== "add") t.setAttribute("aria-pressed", on ? "true" : "false");
     });
-    var ids = psSelectedIds();
-    var n = ids.length;
+
+    var n = ps.selected.length;
     byId("psCount").textContent = n;
-    byId("psCountLabel").textContent = n === 1 ? "Player selected" : "Players selected";
+    byId("psMax").textContent = MAX();
+    byId("psCountBox").classList.toggle("is-full", n >= MAX());
     var f = ESA.Tournament.formatFor(n);
     byId("psFormat").innerHTML = f
       ? "<b>Format</b>" + esc(formatLine(f))
       : "<b>Format</b>Select at least 2 players";
     byId("psStartBtn").disabled = !f || !ESA.Games.tournamentPool().length;
-    byId("psAllBtn").textContent = n === ps.chars.length ? "Clear All" : "Select All";
+    var normals = ps.entries.filter(function (e) { return e.kind === "char"; });
+    var allNormal = normals.length && normals.every(function (e) { return psVariantPid(e.c.id, "normal"); });
+    byId("psAllBtn").textContent = allNormal ? "Clear All" : "Select All";
+    byId("psClearGuestsBtn").classList.toggle("hidden", !ESA.Participants.guests().length);
+
+    psRenderPicked();
 
     var note = byId("psNote");
-    var total = ps.chars.length;
+    var total = ESA.Characters.count();
     var msg = "";
-    if (total < 2) {
-      msg = "A tournament needs at least 2 playable ESA characters. Add more members to the " +
-            "character registry (js/characters.js) to run one.";
+    if (n >= MAX()) {
+      msg = "Roster full — " + MAX() + " / " + MAX() + " players.";
     } else if (!ESA.Games.tournamentPool().length) {
       msg = "No games are marked tournamentEligible in the game registry.";
-    } else if (total < 4) {
-      msg = "Only " + total + " ESA members are playable so far, so this is a mini championship " +
-            "(league + final). Add more characters to unlock semifinals (4+) and quarterfinals (12+).";
+    } else if (total < 2 && n < 2) {
+      msg = "Add Guests (or more ESA members to js/characters.js) to run a tournament.";
     }
     note.textContent = msg;
     note.classList.toggle("hidden", !msg);
+    note.classList.toggle("is-full", n >= MAX());
   }
 
-  function psToggle(i) {
-    var c = ps.chars[i];
-    if (!c) return;
-    ps.selected[c.id] = !ps.selected[c.id];
-    ESA.Audio.play(ps.selected[c.id] ? "toggleOn" : "toggleOff");
-    psRender();
+  /** Compact selected list: one chip per participant, tap the x to remove. */
+  function psRenderPicked() {
+    var host = byId("psPicked");
+    host.textContent = "";
+    host.classList.toggle("is-empty", !ps.selected.length);
+    if (!ps.selected.length) {
+      host.appendChild(document.createTextNode("Nobody selected yet"));
+      return;
+    }
+    ps.selected.forEach(function (pid) {
+      var p = ESA.Participants.get(pid);
+      var c = ESA.Participants.avatar(p);
+      if (!c) return;
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "ps-chip" + (c.evil ? " is-evil" : "") + (p.type === "guest" ? " is-guest" : "");
+      chip.style.setProperty("--cc", c.color);
+      chip.setAttribute("aria-label", "Remove " + p.displayName);
+      chip.innerHTML = '<span class="t-face xs">' + portraitImg(c) + "</span>";
+      var nm = document.createElement("span");
+      nm.className = "pc-name";
+      ESA.setNameEl(nm, c);
+      chip.appendChild(nm);
+      chip.insertAdjacentHTML("beforeend", '<span class="pc-x" aria-hidden="true">&times;</span>');
+      chip.addEventListener("click", function () { psToggle(pid); });
+      host.appendChild(chip);
+    });
   }
 
   function psToggleAll() {
-    var all = psSelectedIds().length === ps.chars.length;
-    ps.chars.forEach(function (c) { ps.selected[c.id] = !all; });
-    ESA.Audio.play(all ? "toggleOff" : "toggleOn");
+    var normals = ps.entries.filter(function (e) { return e.kind === "char"; });
+    var allNormal = normals.every(function (e) { return psVariantPid(e.c.id, "normal"); });
+    if (allNormal) {
+      ps.selected = [];
+      ESA.Audio.play("toggleOff");
+    } else {
+      normals.forEach(function (e) {
+        var p = ESA.Participants.forVariant(e.c.id, "normal");
+        if (!psHas(p.participantId) && !psFull()) ps.selected.push(p.participantId);
+      });
+      ESA.Audio.play("toggleOn");
+    }
     psRender();
   }
 
+  function psClearGuests() {
+    Modal.confirm({
+      title: "Clear All Guests?",
+      body: "Every Guest made this session is removed. Roster picks and control settings stay.",
+      safe: "Keep Guests",
+      danger: "Clear Guests",
+      onConfirm: function () {
+        ESA.Participants.clearGuests();
+        ps.entries = ESA.rosterEntries();
+        ps.focus = Math.min(ps.focus, ps.entries.length - 1);
+        psBuild();
+        psRender();
+      }
+    });
+  }
+
   function psStart() {
-    var ids = psSelectedIds();
-    if (!ESA.Tournament.formatFor(ids.length) || !ESA.Games.tournamentPool().length) {
+    var ids = ps.selected.slice();
+    if (!ESA.Tournament.formatFor(ids.length) || !ESA.Games.tournamentPool().length || ids.length > MAX()) {
       ESA.Audio.play("denied");
       ESA.replayAnim(byId("psFormat"), "is-shake");
       return;
@@ -203,32 +332,137 @@
     App.go("tourIntro");
   }
 
+  /* --- Normal / Evil sheet ------------------------------------------- */
+  function openVariantSheet(base) {
+    var focus = 0;
+    var m = {
+      type: "custom",
+      cls: "variant-sheet",
+      build: function (card) {
+        var head = document.createElement("div");
+        head.className = "vsh-head";
+        head.innerHTML = '<div class="modal-kicker">Choose Variant</div>';
+        var title = document.createElement("h2");
+        title.className = "modal-title";
+        title.textContent = base.displayName;
+        head.appendChild(title);
+        card.appendChild(head);
+
+        var row = document.createElement("div");
+        row.className = "vsh-row";
+        ESA.Participants.VARIANTS.forEach(function (v, i) {
+          var av = ESA.Avatars.forVariant(base.id, v);
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "vsh-opt" + (v === "evil" ? " is-evil" : "");
+          b.setAttribute("data-v", v);
+          b.style.setProperty("--cc", av.color);
+          b.innerHTML = '<span class="vsh-art art-box">' + ESA.bodyArtHTML(av, "normal", "vsh-figure") + "</span>" +
+                        '<span class="vsh-name">' + "" + "</span>" +
+                        '<span class="vsh-status"></span>';
+          ESA.setNameEl(b.querySelector(".vsh-name"), av);
+          b.addEventListener("click", function () {
+            focus = i;
+            psToggleVariant(base.id, v, b);
+            m.refresh(card);
+          });
+          b.addEventListener("mouseenter", function () { focus = i; m.refresh(card); });
+          row.appendChild(b);
+        });
+        card.appendChild(row);
+
+        var foot = document.createElement("div");
+        foot.className = "vsh-foot";
+        foot.innerHTML = '<span class="vsh-count"></span>';
+        var done = document.createElement("button");
+        done.type = "button";
+        done.className = "btn btn-gold vsh-done";
+        done.textContent = "Done";
+        done.addEventListener("click", function () { ESA.Audio.play("uiBack"); Modal.pop(); });
+        foot.appendChild(done);
+        card.appendChild(foot);
+        card.insertAdjacentHTML("beforeend",
+          '<div class="modal-hint"><b>&larr; &rarr;</b> choose &middot; <b>Space</b> add / remove &middot; <b>Esc</b> done</div>');
+        m.refresh(card);
+      },
+      refresh: function (card) {
+        var opts = card.querySelectorAll(".vsh-opt");
+        Array.prototype.forEach.call(opts, function (b, i) {
+          var v = b.getAttribute("data-v");
+          var on = !!psVariantPid(base.id, v);
+          b.classList.toggle("is-on", on);
+          b.classList.toggle("is-focus", i === focus);
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+          b.querySelector(".vsh-status").textContent = on ? "✓ Selected"
+            : (psFull() ? "Roster full" : (ESA.Touch && ESA.Touch.active ? "Tap to add" : "Available"));
+        });
+        card.querySelector(".vsh-count").textContent = ps.selected.length + " / " + MAX() + " selected";
+      },
+      onKey: function (code, e) {
+        var card = Modal.layer.querySelector(".modal-card");
+        if (!card) return true;
+        var dir = { ArrowLeft: -1, KeyA: -1, ArrowRight: 1, KeyD: 1 }[code];
+        if (dir) {
+          e.preventDefault();
+          focus = (focus + dir + 2) % 2;
+          ESA.Audio.play("uiMove");
+          m.refresh(card);
+          return true;
+        }
+        if (code === "Space" || code === "Enter" || code === "NumpadEnter") {
+          var ae = document.activeElement;
+          if (ae && ae.tagName === "BUTTON" && card.contains(ae)) return false;   // Tab users: focused button
+          e.preventDefault();
+          var b = card.querySelectorAll(".vsh-opt")[focus];
+          if (b) b.click();
+          return true;
+        }
+        if (code === "Backspace") { e.preventDefault(); ESA.Audio.play("uiBack"); Modal.pop(); return true; }
+        return false;
+      },
+      onEscape: function () { Modal.pop(); }
+    };
+    ESA.Audio.play("uiClick");
+    Modal.push(m);
+  }
+
   App.register("participants", {
     el: "participantScreen",
     parent: "mode",
     crumb: "Tournament · Participants",
     enter: function () {
-      ps.chars = ESA.Characters.list();
+      ps.entries = ESA.rosterEntries();
       var prev = App.session.pendingParticipants;
-      ps.selected = Object.create(null);
-      ps.chars.forEach(function (c) {
-        ps.selected[c.id] = prev ? prev.indexOf(c.id) >= 0 : true;
-      });
+      if (prev) {
+        ps.selected = prev.filter(function (pid) { var p = ESA.Participants.get(pid); return p && !p.removed; });
+      } else {
+        // First visit: everyone on the permanent roster, Normal variants
+        // (the previous "all selected" default).
+        ps.selected = [];
+        ESA.Characters.list().forEach(function (c) {
+          if (ps.selected.length < MAX()) ps.selected.push(ESA.Participants.forVariant(c.id, "normal").participantId);
+        });
+      }
       ps.focus = 0;
       psBuild();
       psRender();
     },
     onResize: function () {
-      ps.cols = ESA.sizeRoster(byId("psRoster"), byId("psRoster").parentNode, ps.chars.length, null, { max: 180 });
+      ps.cols = ESA.sizeRoster(byId("psRoster"), byId("psRoster").parentNode, ps.entries.length, null, { max: 180 });
     },
     onKey: function (code) {
       var dir = { ArrowUp: "up", KeyW: "up", ArrowDown: "down", KeyS: "down",
                   ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right" }[code];
+      var e = ps.entries[ps.focus];
       if (dir) {
-        var next = ESA.gridMove(ps.focus, dir, ps.chars.length, ps.cols);
+        var next = ESA.gridMove(ps.focus, dir, ps.entries.length, ps.cols);
         if (next !== ps.focus) { ps.focus = next; ESA.Audio.play("uiMove"); psRender(); }
       } else if (code === "Space") {
-        psToggle(ps.focus);
+        psActivate(ps.focus);
+      } else if ((code === "KeyN" || code === "KeyE") && e && e.kind === "char") {
+        psToggleVariant(e.c.id, code === "KeyE" ? "evil" : "normal", ps.tiles[ps.focus]);
+      } else if (code === "KeyG") {
+        psAddGuest();
       } else if (ESA.isEnter(code)) {
         psStart();
       }
@@ -258,7 +492,7 @@
       var f = ESA.Tournament.formatFor(ids.length);
       byId("tiFaces").innerHTML = ids.map(function (id, i) {
         return '<span class="ti-face" style="--i:' + i + '">' + face(id) +
-               "<small>" + esc(name(id)) + "</small></span>";
+               "<small>" + nameHTML(id) + "</small></span>";
       }).join("");
       byId("tiFormat").innerHTML = f ? formatSteps(f).map(function (s, i) {
         return (i ? '<span class="ti-arrow" style="--i:' + i + '"></span>' : "") +
@@ -365,15 +599,15 @@
       var aCls = m.status === "done" ? (m.winner === m.a ? "is-winner" : m.draw ? "" : "is-loser") : "";
       var bCls = m.status === "done" ? (m.winner === m.b ? "is-winner" : m.draw ? "" : "is-loser") : "";
       html += '<div class="hr-match ' + state + '">' +
-        '<span class="hr-p a ' + aCls + '">' + face(m.a, "sm") + "<span>" + esc(name(m.a)) + "</span></span>" +
+        '<span class="hr-p a ' + aCls + '">' + face(m.a, "sm") + "<span>" + nameHTML(m.a) + "</span></span>" +
         '<span class="hr-score">' + (m.status === "done" ? m.scoreA + "<i>–</i>" + m.scoreB
           : (m === next && g ? "NEXT" : "VS")) + "</span>" +
-        '<span class="hr-p b ' + bCls + '"><span>' + esc(name(m.b)) + "</span>" + face(m.b, "sm") + "</span>" +
+        '<span class="hr-p b ' + bCls + '"><span>' + nameHTML(m.b) + "</span>" + face(m.b, "sm") + "</span>" +
         (m.draw ? '<span class="hr-tag">Tie</span>' : "") +
         "</div>";
     });
     r.byes.forEach(function (id) {
-      html += '<div class="hr-match is-bye"><span class="hr-p a">' + face(id, "sm") + "<span>" + esc(name(id)) +
+      html += '<div class="hr-match is-bye"><span class="hr-p a">' + face(id, "sm") + "<span>" + nameHTML(id) +
               '</span></span><span class="hr-score">BYE</span><span class="hr-p b"><span>+3 pts</span></span></div>';
     });
     html += "</div>";
@@ -574,14 +808,14 @@
         var sa = ko ? t.seedOf(m.a) : null, sb = ko ? t.seedOf(m.b) : null;
         list += '<div class="fx-row" style="--i:' + i + '">' +
           '<span class="fx-p a">' + (sa ? '<small class="seed">' + sa + "</small>" : "") + face(m.a) +
-            "<span>" + esc(name(m.a)) + "</span></span>" +
+            "<span>" + nameHTML(m.a) + "</span></span>" +
           '<span class="fx-vs">VS</span>' +
-          '<span class="fx-p b"><span>' + esc(name(m.b)) + "</span>" + face(m.b) +
+          '<span class="fx-p b"><span>' + nameHTML(m.b) + "</span>" + face(m.b) +
             (sb ? '<small class="seed">' + sb + "</small>" : "") + "</span></div>";
       });
       r.byes.forEach(function (id, i) {
         list += '<div class="fx-row is-bye" style="--i:' + (r.matches.length + i) + '">' +
-          '<span class="fx-p a">' + face(id) + "<span>" + esc(name(id)) + "</span></span>" +
+          '<span class="fx-p a">' + face(id) + "<span>" + nameHTML(id) + "</span></span>" +
           '<span class="fx-vs">BYE</span><span class="fx-p b"><span>Sits out &middot; +3 pts</span></span></div>';
       });
       byId("fxList").innerHTML = list;
@@ -604,7 +838,7 @@
       (function flick() {
         if (gen !== fx.gen) return;
         for (var i = 0; i < cards.length; i++) {
-          var c = char(everyone[Math.floor(Math.random() * everyone.length)]);
+          var c = av(everyone[Math.floor(Math.random() * everyone.length)]);
           if (c) ESA.setArt(cards[i], c, "normal", "head");
         }
         if (ticks++ % 2 === 0) ESA.Audio.play("reelTick");
@@ -666,7 +900,7 @@
         var tag = p.final ? (i < q ? "Qualified" : "Eliminated") : "";
         html += '<div class="st-row ' + cls + '" data-from="' + was + '" data-to="' + i + '" style="--y:' + (was + 1) + '">' +
           '<span class="c-pos">' + (i + 1) + "</span>" +
-          '<span class="c-name">' + face(r.id, "sm") + "<b>" + esc(name(r.id)) + "</b>" + arrow + "</span>" +
+          '<span class="c-name">' + face(r.id, "sm") + "<b>" + nameHTML(r.id) + "</b>" + arrow + "</span>" +
           '<span class="c-n">' + r.played + '</span><span class="c-n">' + r.wins + '</span><span class="c-n">' + r.draws +
           '</span><span class="c-n">' + r.losses + '</span><span class="c-n">' + r.byes + '</span><span class="c-n">' +
           (r.diff > 0 ? "+" : "") + r.diff + '</span><span class="c-pts">' + r.points + "</span>" +
@@ -738,7 +972,7 @@
     html += '<div class="br-col br-champ-col" style="--c:' + cols + '"><div class="br-col-name">Champion<small>&nbsp;</small></div>' +
             '<div class="br-col-body"><div class="br-champ ' + (champ ? "is-crowned" : "") + '">' +
             '<svg viewBox="0 0 100 100" aria-hidden="true"><use href="#icoTrophy" /></svg>' +
-            (champ ? face(champ) + "<b>" + esc(name(champ)) + "</b>" : "<b>?</b>") + "</div></div></div>";
+            (champ ? face(champ) + "<b>" + nameHTML(champ) + "</b>" : "<b>?</b>") + "</div></div></div>";
     return html;
   }
 
@@ -754,7 +988,7 @@
       var seed = t.seedOf(id);
       html += '<div class="br-entrant ' + cls + '">' +
               '<span class="br-seed">' + (seed || "") + "</span>" + face(id, "sm") +
-              '<span class="br-name">' + esc(name(id)) + "</span>" +
+              '<span class="br-name">' + nameHTML(id) + "</span>" +
               '<span class="br-score">' + (m.status === "done" ? e[1] : "") + "</span></div>";
     });
     return html + "</div>";
@@ -788,9 +1022,9 @@
    * THE FINAL
    * ================================================================== */
   function finalSide(id) {
-    var c = char(id);
+    var c = av(id);
     return '<div class="fn-art-wrap art-box">' + ESA.bodyArtHTML(c, "selected", "fn-art") + "</div>" +
-           '<div class="fn-name">' + esc(c.displayName) + "</div>";
+           '<div class="fn-name">' + nameHTML(id) + "</div>";
   }
 
   App.register("final", {
@@ -805,8 +1039,8 @@
       r.presented = true;
       byId("fnA").innerHTML = finalSide(m.a);
       byId("fnB").innerHTML = finalSide(m.b);
-      byId("fnA").style.setProperty("--cc", char(m.a).color);
-      byId("fnB").style.setProperty("--cc", char(m.b).color);
+      byId("fnA").style.setProperty("--cc", av(m.a).color);
+      byId("fnB").style.setProperty("--cc", av(m.b).color);
       ESA.replayAnim(byId("finalScreen"), "is-playing");
     },
     afterEnter: function () { ESA.Audio.play("versus"); },
@@ -825,19 +1059,19 @@
     enter: function () {
       if (!requireTournament()) return;
       var t = T();
-      var c = char(t.champion);
+      var c = av(t.champion);
       if (!c) return;
       var art = byId("chArt");
       ESA.setArt(art, c, "victory", "body");
       art.className = "art-frame ch-art" + (c.victoryAnimation ? " " + c.victoryAnimation : "");
-      byId("chName").textContent = c.displayName;
+      ESA.setNameEl(byId("chName"), c);
       byId("championScreen").style.setProperty("--cc", c.color);
 
-      var row = t.table[c.id];
+      var row = t.table[t.champion];
       var fin = t.knockoutRounds().slice(-1)[0].matches[0];
       var beaten = fin.winner === fin.a ? fin.b : fin.a;
       byId("chRecord").innerHTML = "League: <b>" + row.wins + "W " + row.draws + "D " + row.losses + "L</b> &middot; " +
-        row.points + " pts &middot; Beat <b>" + esc(name(beaten)) + "</b> in the final (" +
+        row.points + " pts &middot; Beat <b>" + nameHTML(beaten) + "</b> in the final (" +
         esc(gameOf(t.currentRound().gameId).title) + ")";
 
       var conf = "";
@@ -957,6 +1191,7 @@
     init: function () {
       byId("psStartBtn").addEventListener("click", psStart);
       byId("psAllBtn").addEventListener("click", psToggleAll);
+      byId("psClearGuestsBtn").addEventListener("click", psClearGuests);
       byId("tiBeginBtn").addEventListener("click", tiBegin);
       byId("hubNextBtn").addEventListener("click", function () { Flow.next(); });
       byId("hubViewBtn").addEventListener("click", hubView);

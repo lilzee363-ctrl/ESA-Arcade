@@ -1,0 +1,600 @@
+/* ==========================================================================
+   ESA ARCADE - Participants, Normal / Evil variants, Guests
+   The Evil look's numbers come from js/variants.js (CSS custom properties
+   --evil-*), so menus and gameplay share one definition.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   EVIL - DOM treatment (matches the cached canvas used in games)
+   -------------------------------------------------------------------------- */
+.is-evil-art { filter: var(--evil-tone, brightness(.8) contrast(1.16) saturate(.84)); }
+.art-frame.is-evil > .art-img {
+  filter: var(--evil-tone, brightness(.8))
+          drop-shadow(0 0 var(--evil-rim, 2px) var(--evil-rim-color, rgba(226, 26, 62, .85)))
+          drop-shadow(0 0 var(--evil-haze, 9px) var(--evil-haze-color, rgba(112, 18, 128, .55)));
+}
+.vs-art.is-evil { --evil-rim: 3px; --evil-haze: 20px; }
+.fn-art.is-evil, .ch-art.is-evil { --evil-rim: 3px; --evil-haze: 16px; }
+
+/* Overlay: no z-index, so the glows SCREEN-blend with the art beneath. */
+.evil-eyes { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; }
+.evil-eyes.is-head::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(226, 26, 62, .45), inset 0 -8px 16px rgba(112, 18, 128, .42);
+}
+.ee-eye {
+  position: absolute;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  opacity: var(--ee-a, 1);
+}
+.ee-eye::before {                     /* bloom: 2.5x the pupil glow */
+  content: "";
+  position: absolute;
+  inset: -75%;
+  border-radius: 50%;
+  background: var(--evil-bloom);
+  mix-blend-mode: screen;
+}
+.ee-eye::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--evil-iris);
+}
+.ee-lens {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--evil-lens);
+  mix-blend-mode: screen;
+}
+.ee-lens.is-soft { opacity: .7; }
+.ee-debug {                            /* index.html?eyes only */
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #00ffe1;
+  border-radius: 50%;
+}
+
+/* "EVIL" in names */
+.evil-word {
+  color: #ff4d5e;
+  text-shadow: 0 0 10px rgba(226, 26, 62, .55);
+}
+.vs-half.is-evil .vs-name .evil-word { text-shadow: 0 0 18px rgba(226, 26, 62, .8), 0 3px 0 rgba(3, 11, 22, .8); }
+
+/* --------------------------------------------------------------------------
+   Roster tiles: Guest + "Add Guest" (Casual and Tournament)
+   -------------------------------------------------------------------------- */
+.cs-tile-name, .ps-tile-name {
+  max-width: var(--tile);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.guest-tag {
+  position: absolute;
+  left: 50%;
+  bottom: 6%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: #2a1a02;
+  background: var(--gold-400);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .4);
+  pointer-events: none;
+}
+.is-add .cs-tile-img, .is-add .ps-tile-img {
+  display: grid;
+  place-items: center;
+  background: rgba(5, 16, 31, .55);
+  border: 3px dashed rgba(243, 195, 90, .5);
+  filter: none;
+}
+.is-add .cs-tile-name, .is-add .ps-tile-name { color: var(--gold-300); }
+.add-plus { position: relative; display: block; width: 34%; aspect-ratio: 1; }
+.add-plus::before, .add-plus::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 4px;
+  background: var(--gold-400);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .45);
+}
+.add-plus::before { width: 100%; height: 16%; }
+.add-plus::after { width: 16%; height: 100%; }
+@media (hover: hover) {
+  .is-add:hover .cs-tile-img, .is-add:hover .ps-tile-img { border-color: var(--gold-300); }
+}
+
+/* Casual: P1 / P2 badge turns crimson on an Evil pick. */
+.cs-tile.evil-p1 .cs-cursor.p1, .cs-tile.evil-p2 .cs-cursor.p2 { background: #b3122f; }
+.cs-tile.evil-p1 .cs-cursor.p1::before, .cs-tile.evil-p2 .cs-cursor.p2::before { content: "EVIL "; color: #ffd0d6; }
+.cs-tile.evil-p1 .cs-cursor.p1 { box-shadow: 0 3px 0 rgba(0, 0, 0, .5), inset 0 0 0 2px var(--p1); }
+.cs-tile.evil-p2 .cs-cursor.p2 { box-shadow: 0 3px 0 rgba(0, 0, 0, .5), inset 0 0 0 2px var(--p2); }
+
+/* --------------------------------------------------------------------------
+   Casual side panel: Add Guest placeholder + NORMAL / EVIL control
+   -------------------------------------------------------------------------- */
+.cs-add-ph {
+  display: none;
+  position: absolute;
+  inset: 10% 16% 8%;
+  place-items: center;
+  border-radius: 18px;
+  border: 2px dashed rgba(243, 195, 90, .5);
+  background: rgba(5, 16, 31, .4);
+}
+.cs-add-ph .add-plus { width: 30%; }
+.cs-side.is-add .cs-add-ph { display: grid; }
+.cs-side.is-add .cs-art { visibility: hidden; }
+
+.cs-variant {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  padding: 3px;
+  border-radius: 10px;
+  background: #020810;
+  border: 1px solid rgba(243, 195, 90, .25);
+}
+.cs-side:not(.has-variants) .cs-variant,
+.cs-side:not(.has-variants) .cs-vkeys { display: none; }
+.cs-vbtn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  transition: background .14s, color .14s, box-shadow .14s;
+}
+@media (hover: hover) {
+  .cs-vbtn:not(.is-on):not(.is-taken):hover { color: var(--cream); background: rgba(255, 255, 255, .06); }
+}
+.cs-vbtn.is-on { color: #2a1a02; background: linear-gradient(180deg, #fde7ae, var(--gold-500)); }
+.cs-vbtn.is-evil.is-on {
+  color: #fff;
+  background: linear-gradient(180deg, #e2304f, #7a0c22);
+  box-shadow: 0 0 14px rgba(226, 26, 62, .55);
+}
+.cs-vbtn.is-taken { opacity: .45; }
+.cs-vbtn.is-taken::after {
+  content: attr(data-taken);
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: .06em;
+  color: #fff;
+  background: rgba(255, 255, 255, .18);
+}
+.cs-variant.is-nudge { animation: confirmNudge .32s ease-out; }
+.cs-vbtn:focus-visible { outline: 2px solid var(--p1); outline-offset: 1px; }
+
+/* --------------------------------------------------------------------------
+   Tournament: Normal / Evil pills on roster tiles
+   -------------------------------------------------------------------------- */
+.ps-vars {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  z-index: 2;
+  display: flex;
+  gap: 3px;
+  pointer-events: none;
+}
+.ps-vars i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--muted-dim);
+  background: #0a2039;
+  border: 1.5px solid rgba(255, 255, 255, .2);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .45);
+}
+.ps-tile.has-normal .pv-n { color: #2a1a02; background: var(--gold-400); border-color: #fff1c8; }
+.ps-tile.has-evil .pv-e { color: #fff; background: #c0142f; border-color: #ff8a98; box-shadow: 0 0 8px rgba(226, 26, 62, .6); }
+.is-fixed-grid .ps-vars { top: 5px; left: 5px; }
+.is-fixed-grid .ps-vars i { width: 20px; height: 20px; font-size: 10px; }
+
+/* Count: "12 / 25" */
+.ps-count { gap: 10px; }
+.ps-count .ps-count-label {
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--cream);
+}
+.ps-count b { white-space: nowrap; padding: 4px 10px; }
+.ps-count b span { font: inherit; letter-spacing: 0; text-transform: none; color: inherit; }
+.ps-count b i { font-style: normal; font-size: 20px; color: var(--muted); }
+.ps-count b #psMax { font-size: 20px; color: var(--muted); }
+.ps-count.is-full b { color: #ffb4ad; box-shadow: inset 0 0 12px rgba(232, 88, 79, .45); }
+.ps-note.is-full { color: #ffd0cb; background: rgba(232, 88, 79, .12); border-color: rgba(232, 88, 79, .6); }
+
+/* Selected participants: compact chips, never a wall */
+.ps-picked-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 4px;
+}
+.ps-picked-label {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--gold-400);
+}
+.ps-picked {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 82px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 3px 2px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.ps-picked.is-empty { align-items: center; font-size: 13px; color: var(--muted-dim); }
+.ps-chip {
+  --cc: var(--gold-500);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  height: 34px;
+  padding: 0 9px 0 4px;
+  border-radius: 17px;
+  background: rgba(5, 16, 31, .88);
+  border: 1.5px solid color-mix(in srgb, var(--cc) 65%, transparent);
+  color: var(--cream);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: border-color .14s, background .14s;
+}
+.ps-chip .t-face.xs { width: 26px; height: 26px; }
+.ps-chip .pc-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ps-chip .pc-x { flex: none; font-size: 17px; line-height: 1; color: var(--muted); }
+.ps-chip.is-evil { background: rgba(28, 5, 14, .9); }
+@media (hover: hover) {
+  .ps-chip:hover { border-color: var(--danger); }
+  .ps-chip:hover .pc-x { color: var(--danger); }
+}
+
+/* --------------------------------------------------------------------------
+   Normal / Evil sheet (Tournament)
+   -------------------------------------------------------------------------- */
+.modal-card.variant-sheet { width: min(620px, 100%); gap: 14px; }
+.vsh-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.vsh-opt {
+  --cc: var(--gold-400);
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px 12px;
+  border-radius: 16px;
+  background: radial-gradient(circle at 50% 36%, color-mix(in srgb, var(--cc) 34%, #0e2c4d), #050f1d 76%);
+  border: 2px solid rgba(255, 255, 255, .12);
+  box-shadow: 0 6px 0 #020810;
+  transition: transform .14s var(--ease-out), border-color .14s, box-shadow .14s;
+}
+.vsh-opt.is-evil { background: radial-gradient(circle at 50% 36%, rgba(150, 16, 48, .55), #12040b 78%); }
+.vsh-opt.is-focus { border-color: rgba(74, 163, 255, .8); }
+.vsh-opt.is-on { border-color: var(--gold-400); box-shadow: 0 6px 0 #020810, 0 0 22px rgba(243, 195, 90, .45); }
+.vsh-opt.is-evil.is-on { border-color: #ff4d5e; box-shadow: 0 6px 0 #020810, 0 0 26px rgba(226, 26, 62, .55); }
+@media (hover: hover) { .vsh-opt:hover { transform: translateY(-3px); } }
+.vsh-art { width: 100%; height: clamp(150px, 30vh, 260px); display: flex; align-items: flex-end; justify-content: center; }
+.vsh-figure.art-frame { --cap-h: 100cqh; --cap-w: 92cqw; }
+.vsh-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: clamp(16px, 2.4vw, 22px);
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--cream);
+}
+.vsh-status {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.vsh-opt.is-on .vsh-status { color: var(--gold-300); }
+.vsh-opt.is-evil.is-on .vsh-status { color: #ff8a98; }
+.vsh-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.vsh-count { font-family: var(--font-display); font-size: 13px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.vsh-done { min-width: 140px; }
+
+/* --------------------------------------------------------------------------
+   Guest creator
+   -------------------------------------------------------------------------- */
+.modal-card.guest-creator {
+  width: min(860px, 100%);
+  max-height: calc(var(--view-h, 100vh) - 40px);
+  gap: 14px;
+  padding: 18px 20px 16px;
+  text-align: left;
+}
+.modal-card.guest-creator[data-step="name"] { width: min(520px, 100%); }
+.modal-card.guest-creator[data-step="random"] { width: min(460px, 100%); }
+.gc-head { position: relative; text-align: center; padding: 0 44px; }
+.gc-close { position: absolute; right: -8px; top: -6px; width: 40px; height: 40px; min-height: 40px; padding: 0; font-size: 16px; }
+.gc-name { display: flex; flex-direction: column; gap: 7px; }
+.gc-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: var(--gold-400);
+}
+.gc-input {
+  width: 100%;
+  height: 54px;
+  padding: 0 16px;
+  border-radius: 12px;
+  background: #020810;
+  border: 2px solid rgba(243, 195, 90, .45);
+  color: var(--cream);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  outline: none;
+}
+.gc-input:focus { border-color: var(--gold-300); box-shadow: 0 0 0 3px rgba(243, 195, 90, .25); }
+.gc-input::placeholder { color: rgba(139, 162, 189, .5); }
+.gc-hint { font-size: 12px; color: var(--muted); }
+.gc-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.gc-choice {
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  white-space: normal;
+}
+.gc-choice b { font-size: 16px; letter-spacing: .1em; text-transform: uppercase; }
+.gc-choice small { font-size: 11px; font-weight: 500; letter-spacing: .03em; text-transform: none; opacity: .8; }
+
+.gc-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 18px; min-height: 0; }
+.gc-layout.is-random { grid-template-columns: 1fr; justify-items: center; }
+.gc-preview { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.gc-stage {
+  position: relative;
+  width: 220px;
+  height: 300px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 10px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: radial-gradient(circle at 50% 38%, rgba(243, 195, 90, .26), #071728 72%);
+  border: 2px solid rgba(243, 195, 90, .35);
+}
+.gc-art {
+  height: 92%;
+  width: auto;
+  max-width: none;
+  filter: drop-shadow(0 10px 14px rgba(0, 0, 0, .5));
+  animation: idleBob 3.2s ease-in-out infinite;
+}
+.gc-ouch {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  height: 31%;
+  width: auto;
+  max-width: none;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(2, 8, 16, .65);
+  border: 1px solid rgba(255, 255, 255, .12);
+}
+.gc-plate { text-align: center; min-width: 0; }
+.gc-plate small {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .3em;
+  text-transform: uppercase;
+  color: var(--gold-400);
+}
+.gc-plate b {
+  display: block;
+  max-width: 236px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--cream);
+}
+.gc-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  min-height: 0;
+  max-height: min(56vh, 460px);
+  overflow-y: auto;
+  padding: 2px 6px 2px 2px;
+  overscroll-behavior: contain;
+}
+.gc-row { display: flex; flex-direction: column; gap: 6px; }
+.gc-opts { display: flex; flex-wrap: wrap; gap: 7px; }
+.gc-swatch {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--sw);
+  border: 3px solid rgba(255, 255, 255, .2);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .45);
+  transition: transform .12s var(--ease-back), border-color .12s;
+}
+.gc-swatch.is-on { border-color: var(--gold-300); box-shadow: 0 0 0 3px rgba(243, 195, 90, .35), 0 3px 0 rgba(0, 0, 0, .45); transform: scale(1.08); }
+.gc-chip {
+  min-height: 34px;
+  padding: 0 13px;
+  border-radius: 17px;
+  background: #0a2039;
+  border: 2px solid rgba(255, 255, 255, .14);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.gc-chip.is-on { color: #2a1a02; background: linear-gradient(180deg, #fde7ae, var(--gold-500)); border-color: #fff1c8; }
+@media (hover: hover) {
+  .gc-chip:not(.is-on):hover { color: var(--cream); border-color: rgba(243, 195, 90, .5); }
+  .gc-swatch:not(.is-on):hover { transform: scale(1.06); border-color: rgba(255, 255, 255, .5); }
+}
+.gc-swatch:focus-visible, .gc-chip:focus-visible, .gc-choice:focus-visible { outline: 3px solid var(--p1); outline-offset: 2px; }
+.gc-foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.gc-foot .is-primary { min-width: 170px; }
+
+/* --- Touch: comfortable, safe-area aware sheets ----------------------- */
+body.is-touch:not([data-state="play"]) #modalLayer {
+  padding: calc(var(--sa-t) + 10px) calc(var(--sa-r) + 10px) calc(var(--sa-b) + 10px) calc(var(--sa-l) + 10px);
+}
+body.is-touch .modal-card.guest-creator,
+body.is-touch .modal-card.variant-sheet {
+  max-height: calc(var(--view-h) - var(--sa-t) - var(--sa-b) - 20px);
+}
+body.is-touch .gc-swatch { width: 40px; height: 40px; }
+body.is-touch .gc-chip { min-height: 42px; padding: 0 14px; }
+body.is-touch .gc-foot .btn, body.is-touch .vsh-done { min-height: 48px; }
+body.is-touch .cs-vbtn { min-height: 40px; }
+body.is-touch .ps-chip { height: 38px; }
+/* Phones: chips scroll sideways in one row instead of stacking up. */
+body.is-touch .ps-picked { flex-wrap: nowrap; max-height: none; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+
+@media (max-width: 720px) {
+  .modal-card.guest-creator { padding: 14px 14px 12px; gap: 10px; }
+  .gc-layout { grid-template-columns: 1fr; gap: 10px; }
+  .gc-layout:not(.is-random) .gc-preview {
+    position: sticky;
+    top: -14px;
+    z-index: 2;
+    flex-direction: row;
+    justify-content: center;
+    gap: 14px;
+    margin: -4px -14px 0;
+    padding: 8px 14px;
+    background: linear-gradient(180deg, #0d2f52, #071a30);
+    border-bottom: 1px solid rgba(243, 195, 90, .25);
+  }
+  .gc-layout:not(.is-random) .gc-stage { width: 118px; height: 160px; padding-bottom: 6px; }
+  .gc-layout:not(.is-random) .gc-plate { text-align: left; }
+  .gc-layout:not(.is-random) .gc-plate b { max-width: 46vw; font-size: 20px; }
+  .gc-rows { max-height: none; overflow: visible; padding: 0; }
+  .gc-foot {
+    position: sticky;
+    bottom: -12px;
+    z-index: 2;
+    margin: 0 -14px -12px;
+    padding: 10px 14px calc(12px + var(--sa-b, 0px));
+    background: linear-gradient(180deg, rgba(4, 13, 25, 0), #040d19 28%);
+  }
+  .gc-foot .btn { flex: 1 1 auto; }
+  .gc-foot .is-primary { flex-basis: 100%; min-width: 0; order: -1; }
+  .gc-choices { grid-template-columns: 1fr; }
+  .vsh-art { height: clamp(140px, 28vh, 220px); }
+  .vsh-name { font-size: 15px; letter-spacing: .1em; }
+}
+
+/* Casual on phones (portrait): the side panels grow while a pick is being
+   confirmed, so the NORMAL / EVIL preview stays visible above the controls. */
+@media (orientation: portrait) {
+  body.is-touch .cs-stage .cs-side { transition: height .2s var(--ease-out); }
+  body.is-touch .cs-stage.has-pending .cs-side { height: clamp(250px, 37vh, 330px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-art { animation: none; }
+  .cs-variant.is-nudge { animation: none; }
+}
+
+/* Rosters that grow with guests scroll; corner badges keep headroom and an
+   overflowing grid never centres its first row out of reach. */
+.ps-roster { padding: 10px 10px 4px; }
+.cs-roster-wrap, .ps-roster-wrap { place-items: safe center; }
+.ps-roster.is-fixed-grid { padding: 0; }   /* touch grids keep badges inside the cards */
+
+/* Tablet landscape (touch): the P1 / P2 panels sit beside the roster. With
+   many guests the roster grows tall, so the panels keep a screen-sized
+   height and stay pinned while the roster scrolls - the preview and the
+   NORMAL / EVIL / CONFIRM controls never slide out of view. */
+@media (orientation: landscape) and (min-height: 561px) {
+  body.is-touch .cs-stage > .cs-side {
+    align-self: start;
+    position: sticky;
+    top: calc(var(--sa-t) + 58px);
+    height: calc(var(--view-h) - var(--sa-t) - var(--sa-b) - 150px);
+    min-height: 320px;
+  }
+}
+
+/* Phone portrait: Start gets its own full-width row; helpers share one. */
+@media (orientation: portrait) {
+  body.is-touch .ps-actions { flex: 1 1 100%; flex-wrap: wrap; gap: 8px; }
+  body.is-touch .ps-actions .btn-small { flex: 1 1 0; min-height: 44px; }
+  body.is-touch .ps-actions #psStartBtn { flex: 1 1 100%; min-height: 50px; order: 2; }
+}
