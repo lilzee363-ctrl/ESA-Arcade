@@ -58,7 +58,7 @@
     "Two players &middot; One keyboard &middot; Extremely serious competition",
     "No coins required &middot; Bragging rights only",
     "Friendships may be tested. Results are final.",
-    "Hidden fuse. Visible panic.",
+    "Short fuse. Visible panic.",
     "The official arcade of the Egyptian Students Association",
     "Warning: Bonk Booth may contain bonking"
   ];
@@ -69,12 +69,12 @@
   };
 
   function launchFromWelcome() {
-    if (welcome.launching || ESA.Screens.busy) return;
+    if (welcome.launching || App.navBusy()) return;
     welcome.launching = true;
     ESA.Audio.unlock();
     ESA.Audio.play("start");
     byId("welcomeScreen").classList.add("is-launching");
-    App.timers.after(330, function () { App.go("mode"); });
+    App.goLater(330, function () { App.go("mode"); });
   }
 
   App.register("welcome", {
@@ -180,14 +180,14 @@
   function modeStacked() { return !!modeScroll && modeScroll.stacked(); }
 
   function chooseMode(i) {
-    if (modeState.choosing || ESA.Screens.busy) return;
+    if (modeState.choosing || App.navBusy()) return;
     modeState.choosing = true;
     focusMode(i, true);
     var mode = MODES[modeState.focus];
     byId("modeGrid").classList.add("is-choosing");
     modeState.cards[modeState.focus].classList.add("is-chosen");
     ESA.Audio.play("lockIn");
-    App.timers.after(560, function () {
+    App.goLater(560, function () {
       App.session.mode = mode;
       App.go(MODE_SCREEN[mode]);
     });
@@ -281,16 +281,23 @@
     var w = (wrap.clientWidth || 600) - (opts.edge || 0);
     var h = wrap.clientHeight || 400;
 
+    // V4.1: a tile is NEVER wider than its share of the width (the old 56px
+    // floor could push the grid past the box and force a horizontal
+    // scrollbar). When the height runs out, rows simply continue and the
+    // roster scrolls VERTICALLY.
     function tileFor(c) {
       var rows = Math.max(1, Math.ceil(n / c));
       var byW = (w - (c - 1) * gap) / c;
       var byH = (h - (rows - 1) * gap) / rows - label;
-      return Math.floor(Math.max(56, Math.min(maxTile, byW, byH)));
+      return Math.floor(Math.min(byW, Math.max(Math.min(64, byW), Math.min(maxTile, byW, byH))));
     }
 
     if (!cols) {
       var best = 1, bestTile = -1, bestGap = Infinity;
-      for (var c = 1; c <= Math.max(1, n); c++) {
+      // Never more columns than keep tiles >= 64px wide: extra fighters add
+      // ROWS, not a wider (horizontally scrolling) grid.
+      var maxCols = Math.max(1, Math.floor((w + gap) / (64 + gap)));
+      for (var c = 1; c <= Math.max(1, Math.min(n, maxCols)); c++) {
         var t = tileFor(c);
         var emptyInLastRow = (c - (n % c)) % c;
         if (t > bestTile + 2 || (Math.abs(t - bestTile) <= 2 && emptyInLastRow < bestGap)) {
@@ -341,8 +348,72 @@
   }
   ESA.rosterEntries = rosterEntries;
 
-  /** One roster tile (DOM APIs: guest nicknames are set as text only). */
-  function rosterTile(e, i, prefix) {
+  /** Index of the same roster entry in a rebuilt list, or -1. */
+  function sameEntry(list, e) {
+    if (!e) return -1;
+    for (var i = 0; i < list.length; i++) {
+      var x = list[i];
+      if (x.kind !== e.kind) continue;
+      if (x.kind === "add" || (x.kind === "guest" && x.p === e.p) || (x.kind === "char" && x.c.id === e.c.id)) return i;
+    }
+    return -1;
+  }
+
+  /** Re-points an index into `old` at the same entry in `next` (gone -> fallback). */
+  function remapEntry(old, next, i, fallback) {
+    if (i === null || i === undefined) return fallback;
+    var j = sameEntry(next, old[i]);
+    return j < 0 ? fallback : j;
+  }
+  ESA.remapEntry = remapEntry;
+
+  /*
+   * DELETE GUEST (shared by Casual, Solo and Tournament rosters). One
+   * Cancel / Delete confirmation, then the Guest leaves the session pool
+   * (js/participants.js: sessionStorage entry, photo, cached art) and every
+   * cross-screen reference to them is cleared here, so no screen can
+   * resolve a ghost. `onDeleted` rebuilds the calling screen.
+   */
+  function confirmDeleteGuest(p, onDeleted) {
+    if (!p || p.type !== "guest" || p.removed || ESA.Modal.active() || App.navBusy()) return;
+    var id = p.participantId;
+    var t = App.session.tournament;
+    if (t && !t.champion && t.participants.indexOf(id) >= 0) {
+      ESA.Audio.play("denied");
+      ESA.Modal.push({
+        type: "confirm",
+        title: "Guest In Play",
+        body: p.displayName + " is in the current tournament and can't be deleted until it ends.",
+        buttons: [{ label: "OK", kind: "safe", action: function () { ESA.Modal.pop(); } }]
+      });
+      return;
+    }
+    ESA.Modal.confirm({
+      title: "Delete " + p.displayName + "?",
+      body: p.guestPhoto ? "This Guest and their photo are removed from this session." : "This Guest is removed from this session.",
+      safe: "Cancel",
+      danger: "Delete",
+      onConfirm: function () {
+        ESA.Participants.removeGuest(id);
+        var s = App.session;
+        if (s.setup && (s.setup.p1 === id || s.setup.p2 === id)) s.setup = null;
+        if (s.pendingParticipants) s.pendingParticipants = s.pendingParticipants.filter(function (x) { return x !== id; });
+        if (s.solo && s.solo.humanPid === id) { s.solo.humanPid = null; s.solo.cpuPid = null; }
+        ESA.Audio.play("toggleOff");
+        if (onDeleted) onDeleted(p);
+      }
+    });
+  }
+  ESA.confirmDeleteGuest = confirmDeleteGuest;
+
+  var TRASH_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 2.5h6l.8 1.8H20v2.2H4V4.3h4.2zM5.6 8h12.8l-1 13.5H6.6zm3.6 2.4v8.6h1.7v-8.6zm3.9 0v8.6h1.7v-8.6z"/></svg>';
+
+  /**
+   * One roster tile (DOM APIs: guest nicknames are set as text only).
+   * opts.onGuestDeleted: Guest tiles get a small trash button (inside the
+   * tile, so it never shifts the grid) that asks before deleting.
+   */
+  function rosterTile(e, i, prefix, opts) {
     var b = document.createElement("button");
     b.type = "button";
     b.className = prefix + "-tile" + (e.kind === "guest" ? " is-guest" : e.kind === "add" ? " is-add" : "");
@@ -365,6 +436,20 @@
         tag.className = "guest-tag";
         tag.textContent = "Guest";
         img.appendChild(tag);
+        if (opts && opts.onGuestDeleted) {
+          var del = document.createElement("span");
+          del.className = "guest-del";
+          del.setAttribute("role", "button");
+          del.setAttribute("aria-label", "Delete guest " + e.p.displayName);
+          del.title = "Delete guest";
+          del.innerHTML = TRASH_SVG;
+          del.addEventListener("click", function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();                  // never selects the tile
+            confirmDeleteGuest(e.p, opts.onGuestDeleted);
+          });
+          img.appendChild(del);
+        }
       }
     }
     b.appendChild(img);
@@ -390,8 +475,10 @@
 
   /* ================================================================== *
    * CASUAL CHARACTER SELECT
-   *   tap a fighter -> preview + NORMAL / EVIL -> CONFIRM | CHANGE -> LOCKED IN
-   * A first tap never commits anything. The same exact identity (e.g.
+   *   tap a fighter -> preview + NORMAL / EVIL -> CONFIRM -> LOCKED IN
+   * A first tap never commits anything; tapping another fighter before
+   * Confirm simply moves the preview there (V4.1: no separate CHANGE
+   * button - it was redundant). Back / moving away still drop a preview. The same exact identity (e.g.
    * Normal Zima, or one Guest) can't be on both sides - Zima vs Evil Zima
    * is the new mirror match.
    * ================================================================== */
@@ -438,7 +525,7 @@
     var host = byId("csRoster");
     host.innerHTML = "";
     cs.tiles = cs.entries.map(function (e, i) {
-      var b = rosterTile(e, i, "cs");
+      var b = rosterTile(e, i, "cs", { onGuestDeleted: csGuestDeleted });
       b.insertAdjacentHTML("beforeend", '<span class="cs-cursor p1">P1</span><span class="cs-cursor p2">P2</span>');
       b.addEventListener("click", function () { csClickTile(i); });
       host.appendChild(b);
@@ -475,7 +562,6 @@
           '<div class="cs-ask">Select <b class="cs-ask-name"></b>?</div>' +
           '<div class="cs-confirm-row">' +
             '<button class="btn btn-gold btn-small cs-ok" type="button">&#10003; Confirm</button>' +
-            '<button class="btn btn-ghost btn-small cs-no" type="button">Change</button>' +
           "</div>" +
           '<div class="cs-confirm-keys desk-only"><span class="keycap">' + esc(ctl.selectLabel.lock) +
             '</span> confirm <span class="cs-vkeys">&middot; <span class="keycap">' + esc(VKEYS[slot].variant) +
@@ -484,11 +570,30 @@
         '<div class="cs-lockflash" aria-hidden="true"><span class="cs-lf-who"></span><span class="cs-lf-word">Locked In</span></div>';
       side.querySelector(".cs-change").addEventListener("click", function () { csUnlock(slot); });
       side.querySelector(".cs-ok").addEventListener("click", function () { csConfirm(slot); });
-      side.querySelector(".cs-no").addEventListener("click", function () { csCancelPending(slot, true); });
       Array.prototype.forEach.call(side.querySelectorAll(".cs-vbtn"), function (b) {
         b.addEventListener("click", function () { csSetVariant(slot, b.getAttribute("data-v")); });
       });
     });
+  }
+
+  /** A Guest was deleted: rebuild, keeping every cursor / pick on its fighter. */
+  function csGuestDeleted() {
+    if (App.state !== "charSelect") return;
+    var old = cs.entries;
+    cs.entries = rosterEntries();
+    ESA.SLOTS.forEach(function (slot) {
+      cs.cursor[slot] = remapEntry(old, cs.entries, cs.cursor[slot], Math.min(cs.cursor[slot], cs.entries.length - 1));
+      cs.pending[slot] = remapEntry(old, cs.entries, cs.pending[slot], null);
+      var wasLocked = cs.locked[slot] !== null;
+      cs.locked[slot] = remapEntry(old, cs.entries, cs.locked[slot], null);
+      if (wasLocked && cs.locked[slot] === null) {          // the deleted Guest was locked in
+        cs.lockedPid[slot] = null;
+        cs.readyGen++;
+        byId("charSelectScreen").classList.remove("is-ready");
+      }
+    });
+    csBuildTiles();
+    csRender();
   }
 
   function csSide(slot) { return byId(slot === "p1" ? "csSideP1" : "csSideP2"); }

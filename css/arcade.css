@@ -215,6 +215,10 @@ body.is-gameplay .amb-pattern { transform: none; transition: none; }
   box-shadow: 0 -6px 24px rgba(243, 195, 90, .25);
 }
 #veil.is-in .shutter { transform: none; transition: transform .29s cubic-bezier(.7, 0, .84, 0); }
+/* While the shutters close, taps can't reach the screen being left (no
+   second navigation / duplicate action mid-transition). Opening stays
+   click-through so the new screen is usable immediately. */
+#veil.is-in { pointer-events: auto; }
 #veil.is-out .shutter.top { transform: translate3d(0, -101%, 0); transition: transform .36s var(--ease-out) .04s; }
 #veil.is-out .shutter.bot { transform: translate3d(0, 101%, 0); transition: transform .36s var(--ease-out) .04s; }
 
@@ -1009,6 +1013,33 @@ body.is-attract .welcome-emblem img { animation-duration: 3.6s; }
 
 .result-actions .btn.is-default { box-shadow: 0 5px 0 var(--gold-700), 0 0 0 3px rgba(243, 195, 90, .3), 0 12px 22px rgba(0, 0, 0, .4); }
 
+/* Result protection (js/arena.js initResultGuard): a thin gold line that
+   drains over 5 s while stray taps / Esc can't dismiss the card. */
+.result-guard {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: 9px;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(243, 195, 90, .14);
+  opacity: 0;
+  transition: opacity .45s var(--ease-out);
+  pointer-events: none;
+}
+.result-guard span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold-600), var(--gold-400));
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+.result-card.is-guarded .result-guard { opacity: .9; }
+.result-card.is-guarded .result-guard span { animation: resultGuard 5s linear forwards; }
+@keyframes resultGuard { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
 /* --- Play bar extras ----------------------------------------------------- */
 .pause-btn { gap: 8px; }
 .play-tag {
@@ -1161,3 +1192,30 @@ body.is-gameplay .amb-scan { display: none; }
   .amb-emblem, .amb-stars i, .amb-glint, .amb-scan { animation: none !important; }
   .amb-stars i { opacity: .25; }
 }
+
+/* ==========================================================================
+   V4.1 PERFORMANCE
+   1. Inactive screens are only visibility:hidden (they must keep their
+      layout for measuring), so their infinite decorative animations
+      (arrow nudges, idle bobs, bulbs, breathing faces) used to keep
+      ticking behind whatever was on screen - including behind gameplay.
+      They now pause while their screen is not the active one.
+   2. Adaptive quality (js/quality.js): body.q-medium / body.q-low trim
+      DECORATION only - never anything a game reads.
+   ========================================================================== */
+.screen:not(.is-active) *,
+.screen:not(.is-active) *::before,
+.screen:not(.is-active) *::after { animation-play-state: paused !important; }
+
+/* Medium: the blurred light sweep and the dust field go. */
+body.q-medium .amb-sweep, body.q-low .amb-sweep,
+body.q-medium .amb-dust, body.q-low .amb-dust { display: none; }
+/* Low: the menu ambience goes still and big drop-shadows are dropped. */
+body.q-low .amb-stars i, body.q-low .amb-emblem, body.q-low .amb-grid,
+body.q-low .bezel-bulbs i { animation: none !important; }
+body.q-low .vs-art, body.q-low .cs-art, body.q-low .fn-art, body.q-low .ch-art,
+body.q-low .welcome-emblem img, body.q-low .cab-art svg, body.q-low .cab-art img { filter: none !important; }
+body.q-low .art-frame.is-evil > .art-img {
+  filter: var(--evil-tone, brightness(.8)) drop-shadow(0 0 2px var(--evil-rim-color, rgba(226, 26, 62, .85))) !important;
+}
+body.q-low .result-overlay { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(2, 9, 18, .8); }

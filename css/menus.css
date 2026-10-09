@@ -665,7 +665,12 @@ body.is-gameplay #crt { display: none; }
   min-width: 0;
   display: grid;
   place-items: center;
-  overflow: auto;
+  /* V4.1: the roster grows in ROWS. Never a horizontal scrollbar: the
+     stable gutter means a vertical scrollbar can no longer steal width
+     from tiles that were sized before it appeared. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .cs-roster, .ps-roster {
   --tile: 140px;
@@ -781,7 +786,7 @@ body.is-gameplay #crt { display: none; }
     linear-gradient(250deg, color-mix(in srgb, var(--cc) 70%, #030b16), #030b16 85%);
 }
 .vs-art-wrap { flex: 1; min-height: 0; display: flex; align-items: flex-end; justify-content: center; width: 100%; }
-.vs-art { max-height: 74vh; max-width: 80%; object-fit: contain; filter: drop-shadow(0 20px 30px rgba(0, 0, 0, .6)); }
+.vs-art { max-height: 74vh; max-width: 80%; object-fit: contain; filter: drop-shadow(0 16px 22px rgba(0, 0, 0, .55)); }
 .vs-half.p2 .vs-art { transform: scaleX(-1); }
 .vs-plate { display: flex; align-items: baseline; gap: 12px; margin-top: 8px; }
 .vs-slot {
@@ -811,7 +816,34 @@ body.is-gameplay #crt { display: none; }
   place-items: center;
   z-index: 2;
 }
-.vs-emblem { width: clamp(150px, 24vh, 240px); opacity: .35; filter: drop-shadow(0 0 30px rgba(243, 195, 90, .5)); }
+/* WHITE-SQUARE FIX (V4.1): the emblem and the VS word no longer carry CSS
+   filters while they scale / rotate in. A filtered layer being composited
+   mid-animation (drop-shadow on the 1254px emblem; drop-shadow over
+   background-clip:text on the VS word) could briefly paint its bounding
+   box as a pale square. The glow is now a plain radial-gradient disc
+   behind the emblem, and the VS word's hard shadow + glow is a separate
+   solid-colour copy underneath it. Same look, genuine transparency. */
+.vs-emblem { width: clamp(150px, 24vh, 240px); opacity: .35; }
+.vs-glow {
+  position: absolute;
+  width: clamp(230px, 36vh, 360px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(243, 195, 90, .3), rgba(243, 195, 90, .08) 45%, transparent 68%);
+  pointer-events: none;
+}
+.vs-word-sh {
+  position: absolute;
+  font-family: var(--font-display);
+  font-size: clamp(90px, 15vw, 190px);
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: .02em;
+  color: #3a2a08;
+  translate: 0 6px;
+  text-shadow: 0 0 40px rgba(243, 195, 90, .6);
+  pointer-events: none;
+}
 .vs-word {
   position: absolute;
   font-family: var(--font-display);
@@ -824,7 +856,6 @@ body.is-gameplay #crt { display: none; }
           background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 6px 0 #3a2a08) drop-shadow(0 0 40px rgba(243, 195, 90, .6));
 }
 .vs-flash {
   position: absolute;
@@ -838,7 +869,8 @@ body.is-gameplay #crt { display: none; }
 .vs-screen.is-playing .vs-half.p2 { animation: vsInRight .5s var(--ease-out) backwards; }
 .vs-screen.is-playing .vs-art { animation: vsArt .7s var(--ease-out) .12s backwards; }
 .vs-screen.is-playing .vs-half.p2 .vs-art { animation-name: vsArtR; }
-.vs-screen.is-playing .vs-word { animation: vsSlam .42s var(--ease-back) .38s backwards; }
+.vs-screen.is-playing .vs-word, .vs-screen.is-playing .vs-word-sh { animation: vsSlam .42s var(--ease-back) .38s backwards; }
+.vs-screen.is-playing .vs-glow { animation: vsEmblem 1s ease-out .38s backwards; }
 .vs-screen.is-playing .vs-emblem { animation: vsEmblem 1s ease-out .38s backwards; }
 .vs-screen.is-playing .vs-flash { animation: vsFlash .5s ease-out .4s; }
 @keyframes vsInLeft { from { transform: translateX(-100%); } to { transform: none; } }
@@ -1475,7 +1507,10 @@ body.is-gameplay #mascot { display: none !important; }
   user-select: none;
 }
 .cs-art.art-frame { --cap-h: 100cqh; --cap-w: 100cqw; }
-.vs-art.art-frame { --cap-h: min(100cqh, 74vh); --cap-w: 80cqw; }
+/* V4.1: a bounded presentation box, slightly smaller than before (was
+   74vh x 80cqw), and a wider shared reference ratio so slim and broad
+   fighters (Normal, Evil, Guest) stand at the SAME height. UI only. */
+.vs-art.art-frame { --cap-h: min(100cqh, 60vh); --cap-w: 66cqw; --ar-ref: .86; }
 .fn-art.art-frame { --cap-h: min(100cqh, 64vh); --cap-w: 90cqw; }
 .ch-art.art-frame { --cap-h: 100cqh; --cap-w: 80cqw; }
 .fn-art-wrap { flex: 1; min-height: 0; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
@@ -1547,7 +1582,7 @@ body.is-gameplay #mascot { display: none !important; }
   .vs-name.is-long { font-size: clamp(15px, 5vw, 26px); }
   .vs-name.is-xlong { font-size: clamp(14px, 4.3vw, 22px); overflow-wrap: break-word; }
   .vs-art-wrap { flex: none; height: min(44vh, 80vw); width: 100%; }
-  .vs-art.art-frame { --cap-h: 100cqh; --cap-w: 96cqw; }
+  .vs-art.art-frame { --cap-h: 92cqh; --cap-w: 84cqw; }
   .vs-art { max-width: 100%; }
   .vs-half.p1 .vs-plate, .vs-half.p2 .vs-plate { margin-left: 0; margin-right: 0; max-width: 100%; }
   .vs-plate {
@@ -1582,15 +1617,16 @@ body.is-gameplay #mascot { display: none !important; }
     border: 1px solid rgba(255, 90, 110, .6);
   }
   .vs-center { top: calc(var(--sa-t, 0px) + 76px + min(22vh, 40vw)); }
-  .vs-word { font-size: clamp(48px, 16vw, 84px); }
+  .vs-word, .vs-word-sh { font-size: clamp(48px, 16vw, 84px); }
   .vs-emblem { width: clamp(84px, 24vw, 130px); }
+  .vs-glow { width: clamp(130px, 36vw, 200px); }
 }
 /* Phones in landscape (short): smaller plate, sprites capped by height. */
 @media (max-height: 560px) and (orientation: landscape) {
   .vs-half { padding-bottom: calc(var(--sa-b, 0px) + 18px); }
-  .vs-art.art-frame { --cap-h: min(100cqh, 60vh); }
+  .vs-art.art-frame { --cap-h: min(100cqh, 54vh); }
   .vs-plate { flex-wrap: wrap; justify-content: center; gap: 4px 10px; max-width: 80%; }
   .vs-name { font-size: clamp(20px, 4.2vw, 40px); overflow-wrap: anywhere; }
   .vs-name .evil-word { font-size: .5em; letter-spacing: .2em; vertical-align: middle; }
-  .vs-word { font-size: clamp(64px, 12vw, 120px); }
+  .vs-word, .vs-word-sh { font-size: clamp(64px, 12vw, 120px); }
 }

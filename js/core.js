@@ -28,6 +28,49 @@ window.ESA = window.ESA || {};
     return 1 + c3 * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
   };
 
+  /**
+   * ShuffleBag - fair, anti-streak random picks (V4.1).
+   * Every item appears `copies` times per bag, the bag is shuffled, and a
+   * refill never starts with the item that just ended the previous bag. So
+   * the same pick can never come up twice in a row while alternatives
+   * exist, and every item is represented evenly over time.
+   *   var bag = new ESA.ShuffleBag(["a", "b", "c"]);  bag.next();
+   */
+  function ShuffleBag(items, copies) {
+    this.items = (items || []).slice();
+    this.copies = Math.max(1, copies || 1);
+    this.bag = [];
+    this.last = null;
+  }
+  ShuffleBag.prototype.next = function () {
+    if (!this.items.length) return null;
+    if (!this.bag.length) this._refill();
+    this.last = this.bag.pop();
+    return this.last;
+  };
+  ShuffleBag.prototype._refill = function () {
+    var b = [];
+    for (var c = 0; c < this.copies; c++) b.push.apply(b, this.items);
+    for (var i = b.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = b[i]; b[i] = b[j]; b[j] = t;
+    }
+    // next() pops from the END: never open a bag with the previous pick,
+    // and never put two equal picks next to each other inside it.
+    for (var k = b.length - 1; k > 0; k--) {
+      var clash = b[k] === (k === b.length - 1 ? this.last : b[k + 1]);
+      if (!clash) continue;
+      for (var m = k - 1; m >= 0; m--) {
+        if (b[m] !== b[k] && (m === 0 || b[m - 1] !== b[k]) && b[m] !== (k === b.length - 1 ? this.last : b[k + 1])) {
+          var s = b[k]; b[k] = b[m]; b[m] = s; break;
+        }
+      }
+    }
+    this.bag = b;
+  };
+  ShuffleBag.prototype.reset = function () { this.bag.length = 0; this.last = null; };
+  ESA.ShuffleBag = ShuffleBag;
+
   /** Guards against NaN / Infinity leaking into positions. */
   ESA.safe = function (v, fallback) {
     return (typeof v === "number" && isFinite(v)) ? v : fallback;
@@ -560,6 +603,8 @@ window.ESA = window.ESA || {};
 
   ParticleField.prototype.burst = function (x, y, count, o) {
     o = o || {};
+    // Decoration only: lower quality tiers spawn fewer sparks (js/quality.js).
+    if (ESA.Quality) count = ESA.Quality.count(count);
     for (var i = 0; i < count; i++) {
       var a = (o.angle === undefined ? Math.random() * Math.PI * 2
                                      : o.angle + ESA.rand(-o.spread || -0.6, o.spread || 0.6));
@@ -598,14 +643,46 @@ window.ESA = window.ESA || {};
   };
 
   ParticleField.prototype.draw = function (ctx) {
+    // Only particles that transform the context pay for save/restore; the
+    // plain ones (rings, sparks, dots) just set alpha - far cheaper with a
+    // full pool on a phone.
+    var base = ctx.globalAlpha;
     for (var i = 0; i < this.cap; i++) {
       var p = this.items[i];
       if (!p.alive) continue;
       var t = p.life / p.maxLife;
       var alpha = p.fade ? (1 - t) : 1;
+      ctx.globalAlpha = base * Math.max(0, alpha);
+
+      if (p.type === "ring") {
+        var rr = ESA.lerp(p.size, p.size2, ESA.easeOut(t));
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
+        ctx.lineWidth = Math.max(1, 5 * (1 - t));
+        ctx.strokeStyle = p.color;
+        ctx.stroke();
+        continue;
+      }
+      if (p.type === "spark") {
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = Math.max(1, p.size * 0.5);
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - p.vx * 0.022, p.y - p.vy * 0.022);
+        ctx.stroke();
+        ctx.lineCap = "butt";
+        continue;
+      }
+      if (p.type !== "text" && p.type !== "confetti" && p.type !== "star") {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size * (1 - t * 0.45), 0, Math.PI * 2);
+        ctx.fill();
+        continue;
+      }
 
       ctx.save();
-      ctx.globalAlpha = Math.max(0, alpha);
 
       if (p.type === "text") {
         ctx.translate(p.x, p.y);
@@ -618,14 +695,6 @@ window.ESA = window.ESA || {};
         ctx.fillStyle = p.color;
         ctx.fillText(p.text, 0, 0);
 
-      } else if (p.type === "ring") {
-        var r = ESA.lerp(p.size, p.size2, ESA.easeOut(t));
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.lineWidth = Math.max(1, 5 * (1 - t));
-        ctx.strokeStyle = p.color;
-        ctx.stroke();
-
       } else if (p.type === "confetti") {
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rot);
@@ -634,28 +703,20 @@ window.ESA = window.ESA || {};
         ctx.scale(Math.cos(p.rot * 1.6), 1);
         ctx.fillRect(-p.size * 0.5, -p.size * 0.9, p.size, p.size * 1.8);
 
-      } else if (p.type === "star") {
+      } else {
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rot);
         drawStar(ctx, p.size, p.color);
-
-      } else if (p.type === "spark") {
-        ctx.strokeStyle = p.color;
-        ctx.lineWidth = Math.max(1, p.size * 0.5);
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(p.x - p.vx * 0.022, p.y - p.vy * 0.022);
-        ctx.stroke();
-
-      } else {
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * (1 - t * 0.45), 0, Math.PI * 2);
-        ctx.fill();
       }
       ctx.restore();
     }
+    ctx.globalAlpha = base;
+  };
+
+  /** Any particle still alive? (lets a finished screen stop redrawing) */
+  ParticleField.prototype.busy = function () {
+    for (var i = 0; i < this.cap; i++) if (this.items[i].alive) return true;
+    return false;
   };
 
   ParticleField.prototype.clear = function () {

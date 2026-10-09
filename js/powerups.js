@@ -77,6 +77,21 @@
    * Spawner - one pickup on the field at a time.
    * ================================================================== */
 
+  /*
+   * ANTI-REPEAT (V4.1). Pickup types come from a ShuffleBag (js/core.js):
+   * every type once per bag, shuffled, and a bag never starts with the
+   * type that ended the last one - so the same pickup never appears twice
+   * in a row and all of them show up evenly. The bag lives at module
+   * level per type list, so its history survives goals, match restarts
+   * AND rematches (a fresh match used to forget the last pick, which is
+   * how "REVERSE x4" could happen across consecutive matches).
+   */
+  var bags = Object.create(null);
+  function bagFor(list) {
+    var key = list.join("|");
+    return bags[key] || (bags[key] = new ESA.ShuffleBag(list));
+  }
+
   /**
    * opts: types, minDelay (15), maxDelay (22), lifetime (10), radius (17),
    *       findSpot(attempt) -> {x, y}, isClear(x, y, r) -> bool
@@ -146,12 +161,10 @@
     if (this.wait <= 0) this._spawn();
   };
 
-  /** Equal odds, except the previous type sits out when alternatives exist. */
+  /** Shuffle-bag pick: fair over time, never the same type twice in a row. */
   Spawner.prototype._pickType = function () {
     var list = (this.opts.types && this.opts.types.length) ? this.opts.types : order;
-    var last = this.lastType;
-    var pool = list.filter(function (t) { return t !== last; });
-    return ESA.pick(pool.length ? pool : list);
+    return bagFor(list).next();
   };
 
   Spawner.prototype._spawn = function () {
@@ -893,6 +906,7 @@
     Session: Session,
     pickCameo: pickCameo,
     drawDizzy: drawDizzy,
+    drawReverseArrows: drawReverseArrows,
     drawSpeechBubble: drawSpeechBubble,
     drawCrowd: drawCrowd,
     drawCameo: drawCameo

@@ -49,20 +49,26 @@
     _layers: Object.create(null),
 
     init: function (canvas) {
+      var self = this;
       this.canvas = canvas;
       this.ctx = canvas.getContext("2d");
       this.resize();
+      // A lower quality tier may lower the backing-store resolution cap
+      // (decoration only: the logical 960x540 arena never changes).
+      if (ESA.Quality) ESA.Quality.onChange(function () { self.resize(); });
     },
 
     /** Matches the backing store to the CSS size, capped for performance. */
     resize: function () {
       if (!this.canvas) return;
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var cap = ESA.Quality ? ESA.Quality.fx.dprCap : 2;
+      var dpr = Math.min(window.devicePixelRatio || 1, 2, cap);
       if (dpr === this.scale && this.canvas.width === Math.round(W * dpr)) return;
       this.scale = dpr;
       this.canvas.width = Math.round(W * dpr);
       this.canvas.height = Math.round(H * dpr);
       this._layers = Object.create(null);   // cached layers were built at the old scale
+      if (ESA.App && ESA.App.redrawFrozen) ESA.App.redrawFrozen();
     },
 
     /* --- Screen effects --------------------------------------------- */
@@ -277,6 +283,9 @@
   /* ================================================================== *
    * UI - DOM presentation
    * ================================================================== */
+  var RESULT_GUARD_MS = 5000;     // result protection (see initResultGuard)
+  var RESULT_ARM_MS = 350;        // a result button press must start after this
+
   var UI = {
     _countGen: 0,
     _bannerGen: 0,
@@ -311,6 +320,48 @@
         playTitle: id("playTitle"),
         playMode: id("playMode")
       };
+      this.initResultGuard();
+    },
+
+    /*
+     * RESULT PROTECTION (V4.1, shared by every mode - Casual, Solo,
+     * Tournament - since they all end on this one result card).
+     * For RESULT_GUARD_MS after the card appears, inputs that are not a
+     * deliberate press of a visible result button are ignored: taps on
+     * the backdrop, a finger that was already down from gameplay and lifts
+     * over a button, Esc, and Enter (Enter is also a gameplay key). A real
+     * press - pointer DOWN and UP on the same result button, starting once
+     * the card has landed (RESULT_ARM_MS) - works immediately. A thin bar
+     * on the card drains while the protection is on.
+     */
+    initResultGuard: function () {
+      var self = this, ov = this.el.result, card = ov && ov.firstElementChild;
+      if (!card) return;
+      var bar = document.createElement("div");
+      bar.className = "result-guard";
+      bar.setAttribute("aria-hidden", "true");
+      bar.appendChild(document.createElement("span"));
+      card.appendChild(bar);
+      this._resultAt = 0;
+      this._guardT = 0;
+      this._press = null;
+      function actionBtn(t) { return t && t.closest ? t.closest("#resultActions .btn") : null; }
+      ov.addEventListener("pointerdown", function (ev) {
+        var b = actionBtn(ev.target);
+        self._press = b && performance.now() - self._resultAt >= RESULT_ARM_MS ? b : null;
+      }, true);
+      ov.addEventListener("click", function (ev) {
+        if (!self.resultProtected()) return;
+        var b = actionBtn(ev.target);
+        if (b && b === self._press) return;         // deliberate press: let it through
+        ev.preventDefault();
+        ev.stopPropagation();
+      }, true);
+    },
+
+    /** True during the first RESULT_GUARD_MS of a visible result card. */
+    resultProtected: function () {
+      return this.isResultVisible() && performance.now() - this._resultAt < RESULT_GUARD_MS;
     },
 
     /* --- HUD ------------------------------------------------------- */
@@ -554,9 +605,26 @@
       e.result.classList.remove("hidden");
       // Restart the entrance animation on a rematch -> result cycle.
       if (card) { card.style.animation = "none"; void card.offsetWidth; card.style.animation = ""; }
+
+      // Result protection starts now (see initResultGuard).
+      var self = this;
+      this._resultAt = performance.now();
+      this._press = null;
+      clearTimeout(this._guardT);
+      if (card) {
+        card.classList.remove("is-guarded");
+        void card.offsetWidth;                       // restart the drain bar
+        card.classList.add("is-guarded");
+        this._guardT = setTimeout(function () { card.classList.remove("is-guarded"); }, RESULT_GUARD_MS);
+      }
     },
 
     hideResult: function () {
+      clearTimeout(this._guardT);
+      this._resultAt = 0;
+      this._press = null;
+      var card = this.el.result.firstElementChild;
+      if (card) card.classList.remove("is-guarded");
       this.el.result.classList.add("hidden");
       if (this.el.resultActions) this.el.resultActions.innerHTML = "";
       if (this.el.resultExtra) { this.el.resultExtra.innerHTML = ""; this.el.resultExtra.classList.add("hidden"); }

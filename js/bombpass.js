@@ -1,10 +1,27 @@
 /* ==========================================================================
    ESA ARCADE - Bomb Pass
-   Touch your opponent to hand off the bomb. Hidden fuse. First to 3 rounds.
+   Touch your opponent to hand off the bomb. First to 3 rounds.
 
    States: countdown -> playing -> roundEnd -> (countdown | matchEnd)
    Movement and the fuse only advance while state === "playing", which is
    what stops scores changing during a countdown or after the match ends.
+
+   V4.1
+   - Every legitimate hand-off adds PASS_BONUS (+1.0 s) to the fuse, capped
+     at the round's starting fuse, so cornering someone and passing on the
+     last fraction of a second no longer wins for free.
+   - One pass = one physical contact: after a hand-off the pair must
+     SEPARATE (beyond REARM_DIST) before the bomb can change hands again,
+     on top of the short pass cooldown. Staying glued together can't
+     trade the bomb (and its +1 s) back and forth.
+   - The fuse is visible: a compact ring around the bomb plus a small
+     seconds badge, more urgent in the last seconds. Ticking audio stays.
+   - OVERTIME: two players trading the bomb every second would refund the
+     fuse forever, so once a round has run longer than its starting fuse
+     the fuse burns progressively faster (x1 -> x2 over OVERTIME_RAMP s).
+     Every pass still adds its full +1 s; the round just can't stall.
+   - Movement uses the shared momentum model (ESA.SMOOTH_MOVE): same top
+     speed, softer starts / stops and quicker turns.
    ========================================================================== */
 
 (function (ESA) {
@@ -28,6 +45,10 @@
   var PASS_SHOVE_DECAY = 0.0002;
   var ROUND_START_COOLDOWN = 1.1;
   var FUSE_MIN = 10, FUSE_MAX = 18;
+  var PASS_BONUS = 1.0;          // seconds added to the fuse by every real pass
+  var REARM_DIST = TRANSFER_DIST + 12;   // must separate this far before the next pass
+  var FUSE_URGENT = 3;           // last seconds: the countdown turns red and pulses
+  var OVERTIME_RAMP = 8;         // s for the overtime burn to reach x2
 
   function BombPass(api, setup) {
     this.api = api;
@@ -35,8 +56,13 @@
     this.timers = new ESA.TimerGroup();
     this.fx = new ESA.ParticleField(200);
 
-    this.p1 = ESA.makePlayer(who.p1, 250, 370, { speed: PLAYER_SPEED, facing: "right", recoilDecay: PASS_SHOVE_DECAY });
-    this.p2 = ESA.makePlayer(who.p2, W - 250, 370, { speed: PLAYER_SPEED, facing: "left", recoilDecay: PASS_SHOVE_DECAY });
+    var opts = function (facing) {
+      return { speed: PLAYER_SPEED, facing: facing, recoilDecay: PASS_SHOVE_DECAY, smooth: ESA.SMOOTH_MOVE };
+    };
+    this.p1 = ESA.makePlayer(who.p1, 250, 370, opts("right"));
+    this.p2 = ESA.makePlayer(who.p2, W - 250, 370, opts("left"));
+    this.armed = true;            // false right after a pass, until the pair separates
+    this.passFlash = 0;           // +1s badge pop, 0..1
 
     this.wins = { p1: 0, p2: 0 };
     this.round = 1;
@@ -75,12 +101,16 @@
     this.p1.hurtUntil = 0; this.p2.hurtUntil = 0;
     this.p1.recoilX = this.p1.recoilY = 0;
     this.p2.recoilX = this.p2.recoilY = 0;
+    this.p1.vx = this.p1.vy = this.p2.vx = this.p2.vy = 0;
 
     this.holder = Math.random() < 0.5 ? this.p1 : this.p2;
     this.showCooldown = false;
+    this.armed = true;
+    this.passFlash = 0;
     this.passCooldown = ROUND_START_COOLDOWN;
     this.fuse = ESA.rand(FUSE_MIN, FUSE_MAX);
     this.fuseLeft = this.fuse;
+    this.roundT = 0;
     this.tickAccum = 0;
     this.blastT = 0;
     this.fx.clear();
@@ -107,6 +137,7 @@
     this.fx.update(dt);
 
     if (this.blastT > 0) this.blastT = Math.max(0, this.blastT - dt * 1.6);
+    if (this.passFlash > 0) this.passFlash = Math.max(0, this.passFlash - dt * 1.4);
 
     var canMove = (this.state === "playing");
     ESA.movePlayer(this.p1, dt, ESA.BOUNDS, canMove);
@@ -121,12 +152,15 @@
     this.passCooldown -= dt;
     var d = ESA.dist(this.p1.x, this.p1.y, this.p2.x, this.p2.y);
 
-    if (d < TRANSFER_DIST && this.passCooldown <= 0) {
+    // A pass needs a NEW contact: once separated, the next touch counts.
+    if (!this.armed && d > REARM_DIST) this.armed = true;
+    if (d < TRANSFER_DIST && this.passCooldown <= 0 && this.armed) {
       this.transfer(d);
     }
 
     /* --- Fuse -------------------------------------------------------- */
-    this.fuseLeft -= dt;
+    this.roundT += dt;
+    this.fuseLeft -= dt * this.burnRate();
 
     // Ticking speeds up as the fuse burns down, without revealing the time.
     var interval = this.fuseLeft < 2 ? 0.17
@@ -166,6 +200,14 @@
     this.holder = (this.holder === this.p1) ? this.p2 : this.p1;
     this.passCooldown = TRANSFER_COOLDOWN;
     this.showCooldown = true;
+    this.armed = false;           // exactly one pass per contact
+
+    // +1 s for every real pass, never above the round's starting fuse.
+    var before = this.fuseLeft;
+    this.fuseLeft = Math.min(this.fuse, this.fuseLeft + PASS_BONUS);
+    this.passGain = this.fuseLeft - before;
+    this.passFlash = 1;
+    if (this.fuseLeft >= 4) this.tickAccum = 0;   // the tick tempo relaxes with the fuse
 
     // Shove both players apart so they are not instantly back in contact.
     var dx = (this.p2.x - this.p1.x) / Math.max(d, 1);
@@ -181,6 +223,13 @@
       sizeMin: 2, sizeMax: 4.5, gravity: 190
     });
     this.fx.spawn({ type: "ring", x: mx, y: my, size: 10, size2: 56, life: 0.4, color: "#f3c35a" });
+    if (this.passGain > 0.05) {
+      var bp = this.bombPos(performance.now());
+      this.fx.spawn({
+        type: "text", x: bp.x + 40, y: bp.y - 24, vx: 0, vy: -40, gravity: 0, drag: 0.97,
+        life: 0.8, font: 17, text: "+" + this.passGain.toFixed(this.passGain < 0.95 ? 1 : 0) + "s", color: "#9fe3ff"
+      });
+    }
 
     ESA.Audio.play("bombPass");
     ESA.Stage.shake(4);
@@ -260,7 +309,7 @@
       kicker: "Match Over",
       title: winner.name + " Wins",
       text: "Took the match " + this.wins[winner.slot] + "–" +
-            this.wins[loser.slot] + " with a hidden fuse every round.",
+            this.wins[loser.slot] + ". Nerves of steel.",
       scores: { p1: this.wins.p1, p2: this.wins.p2 }
     });
   };
@@ -280,9 +329,9 @@
 
   /**
    * What a player can SEE, for a CPU strategy (js/cpu-bombpass.js). Fills a
-   * caller-owned object (no per-frame allocation). Who holds the bomb and
-   * the PASS COOLDOWN pill are on screen; the fuse time is NOT - only how
-   * hard it fizzes (tension), which everyone can see and hear.
+   * caller-owned object (no per-frame allocation). Who holds the bomb, the
+   * PASS COOLDOWN pill and (V4.1) the fuse countdown are all on screen.
+   * Never the RNG or the next round's fuse.
    */
   BombPass.prototype.observe = function (slot, v) {
     var me = this[slot], op = this[slot === "p1" ? "p2" : "p1"];
@@ -291,10 +340,13 @@
     v.live = this.state === "playing";
     v.speed = PLAYER_SPEED;
     v.transferDist = TRANSFER_DIST;
+    v.rearmDist = REARM_DIST;
     v.meX = me.x; v.meY = me.y;
     v.opX = op.x; v.opY = op.y;
     v.iHold = this.holder === me;
     v.cooldown = this.showCooldown ? Math.max(0, this.passCooldown) : 0;
+    v.armed = this.armed;
+    v.fuse = Math.max(0, this.fuseLeft);
     v.tension = this.tension();
     return v;
   };
@@ -302,6 +354,12 @@
   /* ------------------------------------------------------------------ *
    * Helpers
    * ------------------------------------------------------------------ */
+
+  /** 1 normally; ramps to 2 once the round outlasts its starting fuse. */
+  BombPass.prototype.burnRate = function () {
+    var over = this.roundT - this.fuse;
+    return over > 0 ? 1 + Math.min(1, over / OVERTIME_RAMP) : 1;
+  };
 
   /** 0 = calm, 1 = about to blow. Drives every escalation cue. */
   BombPass.prototype.tension = function () {
@@ -313,7 +371,8 @@
     var h = this.holder || this.p1;
     var tension = this.tension();
     var bob = Math.sin(now / (260 - tension * 150)) * (4 + tension * 4);
-    var jitter = tension > 0.55 ? (Math.random() - 0.5) * tension * 5 : 0;
+    // Deterministic shiver (the fuse ring reads the same position in a frame).
+    var jitter = tension > 0.55 ? Math.sin(now / 17) * 0.5 * tension * 5 : 0;
     return {
       x: h.x + jitter,
       // Clamped so the fuse spark never clips the top of the arena.
@@ -350,6 +409,7 @@
 
     if (this.state === "playing" || this.state === "countdown") {
       this.drawBomb(ctx, now, tension);
+      this.drawFuse(ctx, now);
     }
 
     if (this.blastT > 0) this.drawBlast(ctx);
@@ -447,6 +507,65 @@
     ctx.restore();
   };
 
+  /**
+   * The visible fuse: a thin ring around the bomb that drains clockwise,
+   * plus a compact seconds badge beside it. Calm gold, warming to orange,
+   * then red with a gentle pulse in the last FUSE_URGENT seconds. Small on
+   * purpose - it rides with the bomb and never covers the arena.
+   */
+  BombPass.prototype.drawFuse = function (ctx, now) {
+    var left = Math.max(0, this.fuseLeft);
+    var frac = this.fuse > 0 ? ESA.clamp(left / this.fuse, 0, 1) : 0;
+    var p = this.bombPos(now);
+    var urgent = left <= FUSE_URGENT && this.state === "playing";
+    var col = urgent ? "#ff4d4d" : left <= 6 ? "#ff9a3c" : "#f3c35a";
+    var pulse = urgent ? 0.5 + 0.5 * Math.sin(now / 90) : 0;
+    var R = 31;
+
+    ctx.save();
+    ctx.lineCap = "round";
+    // Track
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = "rgba(7,23,40,.85)";
+    ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, Math.PI * 2); ctx.stroke();
+    // Remaining fuse
+    ctx.globalAlpha = 0.95;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 3 + pulse * 1.2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+    ctx.stroke();
+
+    // Seconds badge: whole seconds while calm, tenths when it matters.
+    var txt = left < FUSE_URGENT ? left.toFixed(1) : String(Math.ceil(left));
+    var bx = p.x + R + 8, by = p.y + 2;
+    if (bx + 40 > W - 8) bx = p.x - R - 48;           // keep it on screen near the right wall
+    var pop = 1 + this.passFlash * 0.25;
+    ctx.translate(bx + 20, by);
+    ctx.scale(pop, pop);
+    ctx.globalAlpha = 0.92;
+    ESA.roundRect(ctx, -20, -11, 40, 22, 11);
+    ctx.fillStyle = urgent ? "rgba(60,6,10,.9)" : "rgba(7,23,40,.86)";
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = this.passFlash > 0.05 ? "#9fe3ff" : col;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = urgent ? "#ffd0cc" : "#fff6e4";
+    ctx.font = "800 13px " + ESA.FONT_DISPLAY;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(txt + "s", 0, 1);
+    if (this.burnRate() > 1.01) {
+      ctx.font = "800 8px " + ESA.FONT_DISPLAY;
+      ctx.letterSpacing = "1.5px";
+      ctx.fillStyle = "#ff9a3c";
+      ctx.fillText("OVERTIME", 0, 19);
+    }
+    ctx.restore();
+  };
+
   /** Expanding fireball left behind at the moment of the blast. */
   BombPass.prototype.drawBlast = function (ctx) {
     var t = 1 - this.blastT;                 // 0 -> 1
@@ -470,14 +589,14 @@
   ESA.Games.register({
     id: "bomb",
     title: "Bomb Pass",
-    tagline: "Holding it? Chase. Not holding it? Run. The fuse is hidden.",
+    tagline: "Holding it? Chase. Not holding it? Run. Every pass buys a second.",
     description: "One of you is holding a live bomb. <b>Touch your opponent to pass it.</b> " +
-                 "The fuse is hidden, so nobody knows when it blows. Don't be the one holding it.",
+                 "Every pass adds <b>+1 second</b> to the fuse. Don't be the one holding it when it blows.",
     mode: "First to " + WINS_NEEDED + " rounds",
     icon: { symbol: "#icoBomb" },
     controls: "arena",
     touch: { movement: "joystick", actions: [], help: ["JOYSTICK — MOVE", "GET CLOSE — TAG THE BOMB ONTO YOUR RIVAL"],
-             description: "One of you is holding a live bomb. <b>Steer into your opponent to pass it</b> — no button needed. The fuse is hidden, so nobody knows when it blows." },
+             description: "One of you is holding a live bomb. <b>Steer into your opponent to pass it</b> — no button needed. Every pass adds <b>+1 second</b> to the fuse. Watch the ring." },
     hud: { centerLabel: "Round", centerValue: "1", pips: WINS_NEEDED },
     accent: "#e8584f",
     canTie: false,
@@ -487,7 +606,7 @@
     soloModeType: "cpu-versus",
     solo: { blurb: "First to 3 rounds vs the CPU. Tag it, or run.", touchBlurb: "First to 3 rounds vs the CPU. Tag it, or run.",
             description: "One of you is holding a live bomb. <b>Touch the CPU to pass it</b> - no button, just get close. " +
-                         "Move with <b>W A S D</b>. The fuse is hidden, so nobody knows when it blows. Don't be the one holding it." },
+                         "Move with <b>W A S D</b>. Every pass adds <b>+1 second</b> to the fuse - watch the ring. Don't be the one holding it." },
     enabled: true,
     create: function (api, setup) { return new BombPass(api, setup); }
   });

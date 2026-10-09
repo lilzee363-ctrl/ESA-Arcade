@@ -70,6 +70,10 @@
      *                           actions: [{ id: "action1", label: "DASH" }],
      *                           interaction: "directTap" (game.onTap),
      *                           help: ["JOYSTICK — MOVE", ...] }
+     *   dash                optional { action: "action1" } - the game has a
+     *                       DASH on that action. Turns on the shared keyboard
+     *                       double-tap dash (js/dash.js); the game resolves
+     *                       the direction with ESA.Dash.direction().
      *   forContext(context) optional: { mode, hud } overrides for a match
      *                       context, e.g. a shorter tournament format
      *   create(api, setup)  returns a new game instance. api.context is the
@@ -106,6 +110,9 @@
           ? { enabled: true, types: (def.powerUps.types || []).slice() }
           : { enabled: false, types: [] },
         touch: normaliseTouch(def.touch),
+        // Optional shared directional dash (js/dash.js): { action: "action1" }.
+        // Opting in enables keyboard double-tap dashing for this game.
+        dash: def.dash && def.dash.action ? { action: def.dash.action } : null,
         forContext: typeof def.forContext === "function" ? def.forContext : null,
         create: def.create
       };

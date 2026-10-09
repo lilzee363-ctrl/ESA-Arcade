@@ -172,14 +172,12 @@
         '<div class="cs-ask">Play as <b class="cs-ask-name"></b>?</div>' +
         '<div class="cs-confirm-row">' +
           '<button class="btn btn-gold btn-small cs-ok" type="button">&#10003; Confirm</button>' +
-          '<button class="btn btn-ghost btn-small cs-no" type="button">Change</button>' +
         "</div>" +
         '<div class="cs-confirm-keys desk-only"><span class="keycap">Space</span> confirm ' +
           '<span class="cs-vkeys">&middot; <span class="keycap">W S</span> normal / evil </span></div>' +
       "</div>" +
       '<div class="cs-lockflash" aria-hidden="true"><span class="cs-lf-who"></span><span class="cs-lf-word">Locked In</span></div>';
     side.querySelector(".cs-ok").addEventListener("click", selConfirm);
-    side.querySelector(".cs-no").addEventListener("click", function () { selCancel(true); });
     Array.prototype.forEach.call(side.querySelectorAll(".cs-vbtn"), function (b) {
       b.addEventListener("click", function () { selSetVariant(b.getAttribute("data-v")); });
     });
@@ -189,13 +187,24 @@
     var host = byId("soRoster");
     host.innerHTML = "";
     sel.tiles = sel.entries.map(function (e, i) {
-      var b = ESA.rosterTile(e, i, "cs");
+      var b = ESA.rosterTile(e, i, "cs", { onGuestDeleted: selGuestDeleted });
       b.insertAdjacentHTML("beforeend", '<span class="cs-cursor p1">YOU</span>');
       b.addEventListener("click", function () { selClick(i); });
       host.appendChild(b);
       return b;
     });
     sel.cols = ESA.sizeRoster(host, host.parentNode, sel.entries.length, null, { label: 40, edge: 14 });
+  }
+
+  /** A Guest was deleted: rebuild, keeping the cursor / preview on its fighter. */
+  function selGuestDeleted() {
+    if (App.state !== "soloSelect") return;
+    var old = sel.entries;
+    sel.entries = ESA.rosterEntries();
+    sel.cursor = ESA.remapEntry(old, sel.entries, sel.cursor, Math.min(sel.cursor, sel.entries.length - 1));
+    sel.pending = ESA.remapEntry(old, sel.entries, sel.pending, null);
+    selBuildTiles();
+    selRender();
   }
 
   function selRender() {
@@ -303,7 +312,7 @@
   }
 
   function selConfirm() {
-    if (App.state !== "soloSelect" || sel.locked || sel.pending === null) return;
+    if (App.state !== "soloSelect" || sel.locked || sel.pending === null || App.navBusy()) return;
     var e = selEntry(sel.pending);
     if (!e || e.kind === "add") return;
     var p = e.kind === "guest" ? e.p : ESA.Participants.forVariant(e.c.id, sel.variant);
@@ -320,7 +329,7 @@
     ESA.replayAnim(side.querySelector(".cs-lockflash"), "is-on");
     selRender();
     var gen = ++sel.gen;
-    App.timers.after(760, function () {
+    App.goLater(760, function () {
       if (gen !== sel.gen || App.state !== "soloSelect") return;
       App.go("soloGames");
     });
@@ -434,7 +443,7 @@
   }
 
   function openStats(from) {
-    if (ESA.Screens.busy) return;
+    if (App.navBusy()) return;
     S().statsFrom = from || null;
     ESA.Audio.play("uiClick");
     App.go("soloStats");
@@ -506,7 +515,7 @@
 
   function gsChoose(i) {
     var g = gs.list[i];
-    if (!g || App.state !== "soloGames" || ESA.Screens.busy) return;
+    if (!g || App.state !== "soloGames" || App.navBusy()) return;
     var s = S();
     if (s.gameId !== g.id) s.cpuPid = null;
     s.gameId = g.id;
@@ -600,7 +609,7 @@
   }
 
   function dChoose(i) {
-    if (dsel.choosing || App.state !== "soloDifficulty" || ESA.Screens.busy) return;
+    if (dsel.choosing || App.state !== "soloDifficulty" || App.navBusy()) return;
     var d = ESA.CPU.DIFFICULTIES[i];
     if (!d) return;
     dsel.choosing = true;
@@ -611,7 +620,7 @@
     var s = S();
     s.difficulty = d.id;
     newOpponent();                       // a fresh rival for every new matchup
-    App.timers.after(480, function () { App.go("vs"); });
+    App.goLater(480, function () { App.go("vs"); });
   }
 
   App.register("soloDifficulty", {

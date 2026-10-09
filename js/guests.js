@@ -18,6 +18,17 @@
              speed. Customisation is visual only.
    SESSION   Appearances are plain enum indices, sanitised on every load.
              Nothing here touches localStorage (see js/participants.js).
+   PHOTO     (V4.1, optional) "Use my photo": the player picks / takes a
+             photo, positions + zooms it in a round crop, and it is
+             resized ON THIS DEVICE to a 256x256 JPEG that becomes the
+             guest's FACE - masked into the head of the same stylised
+             body, clothes and colours. No upload, no network, no AI, no
+             accounts: the file is read with a local object URL, drawn to
+             a canvas and the original is released straight away. The
+             hurt state reuses the SAME face with comic overlays (tilt,
+             dizzy stars, sweat, a plaster). Session-only (see
+             js/participants.js). Glasses / shades are not drawn over a
+             real face; hats, hijab, headphones and chains still are.
    ========================================================================== */
 
 (function (ESA) {
@@ -305,14 +316,49 @@
     return out;
   }
 
-  /** Full SVG markup for an appearance (`hurt` = the reaction state). */
-  function svg(a, hurt) {
+  /**
+   * The photo face: the cropped picture masked into the head oval, with an
+   * outline so it sits in the cartoon like a sticker. Hurt: the SAME face,
+   * a red flush, a sweat drop, a plaster and a crack in the frame.
+   */
+  function photoFace(photo, sk, hurt) {
+    var out = '<ellipse cx="132" cy="134" rx="74" ry="80" fill="' + sk + '"/>' +
+      '<image x="58" y="54" width="148" height="160" preserveAspectRatio="xMidYMid slice" clip-path="url(#gf)" ' +
+      'href="' + photo + '" xlink:href="' + photo + '"/>' +
+      '<ellipse cx="132" cy="134" rx="74" ry="80" fill="none" stroke-width="5"/>';
+    if (hurt) {
+      out += '<ellipse cx="132" cy="134" rx="74" ry="80" fill="#ff3b30" opacity=".16" stroke="none"/>' +
+             path("M196 84Q187 100 196 107Q205 100 196 84Z", "#8fd3ff", ' stroke-width="2.5"') +
+             '<g transform="rotate(-28 92 92)"><rect x="70" y="84" width="44" height="16" rx="6" fill="#f2c79b" stroke-width="3"/>' +
+             '<path d="M86 88v8M98 88v8" stroke="#c99a6c" stroke-width="2"/></g>' +
+             path("M190 168L176 178L186 186L172 200", "none", ' stroke-width="3.5"');
+    }
+    return out;
+  }
+
+  /** Full SVG markup for an appearance (`hurt` = the reaction state, `photo` = optional face). */
+  function svg(a, hurt, photo) {
     var sk = SKIN[a.skin].c, hc = HAIR_COLORS[a.hairColor].c, wc = FABRIC[a.wearColor].c;
     var hijab = a.hair === "hijab";
-    var fig = hairBack(a, hc) + legs(a) + body(a, sk) + (hijab ? hijabDrape(wc) : "") +
-              face(a, sk, hc, hurt) + (hijab ? path("M64 132Q66 70 132 64Q198 70 200 132Q186 98 132 94Q78 98 64 132Z", wc) : hairFront(a, hc, wc)) +
-              extras(a, hurt);
-    var s = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '">' +
+    var wear = a.hair === "cap" || a.hair === "beanie";
+    var fig;
+    if (photo) {
+      // Photo face: keep the body, clothes, headwear and hair FRAMING (long
+      // hair, a hijab, a cap / beanie), never cartoon features over a face.
+      var ph = { hair: a.hair === "long" ? "long" : "none", accessory: a.accessory === "glasses" || a.accessory === "shades" ? "none" : a.accessory,
+                 topColor: a.topColor };
+      fig = hairBack(ph, hc) + legs(a) + body(a, sk) + (hijab ? hijabDrape(wc) : "") +
+            photoFace(photo, sk, hurt) +
+            (hijab ? path("M58 112Q62 50 132 44Q202 50 206 112Q186 76 132 72Q78 76 58 112Z", wc)
+                   : wear ? '<g transform="translate(0 -36)">' + hairFront({ hair: a.hair }, hc, wc).replace(shortFront(hc), "") + "</g>" : "") +
+            extras(ph, hurt);
+    } else {
+      fig = hairBack(a, hc) + legs(a) + body(a, sk) + (hijab ? hijabDrape(wc) : "") +
+            face(a, sk, hc, hurt) + (hijab ? path("M64 132Q66 70 132 64Q198 70 200 132Q186 98 132 94Q78 98 64 132Z", wc) : hairFront(a, hc, wc)) +
+            extras(a, hurt);
+    }
+    var s = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '">' +
+            (photo ? '<defs><clipPath id="gf"><ellipse cx="132" cy="134" rx="74" ry="80"/></clipPath></defs>' : "") +
             '<g stroke="' + OUT + '" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round">';
     if (hurt) {
       s += '<g transform="rotate(-5 132 396)">' + fig + "</g>" +
@@ -342,7 +388,8 @@
     var hit = avatarsById[p.participantId];
     if (hit) return hit;
     var a = sanitize(p.guestAppearance);
-    var normal = dataUrl(svg(a, false)), hurt = dataUrl(svg(a, true));
+    var photo = p.guestPhoto || null;
+    var normal = dataUrl(svg(a, false, photo)), hurt = dataUrl(svg(a, true, photo));
     var top = FABRIC[a.topColor].c;
     var av = {
       id: "guest~" + p.participantId,
@@ -390,6 +437,70 @@
     for (var i = 0; i < keys.length - MAX_RASTERS; i++) rasters[keys[i]].canvas = null;
   }
 
+  /** A guest's photo changed: rebuild only its cached art (same participant). */
+  function refresh(p) {
+    var av = avatarsById[p.participantId];
+    if (!av) return;
+    delete rasters[av.id + "|normal"];
+    delete rasters[av.id + "|hurt"];
+    delete avatarsById[p.participantId];
+    ESA.Avatars.forget(av.id);
+    avatarFor(p);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * PHOTO - local only. Read with an object URL, shrunk to a working
+   * canvas (<= 1024 px), cropped by the player, exported as a 256 px JPEG.
+   * ------------------------------------------------------------------ */
+  var PHOTO_OUT = 256;
+  var CROP_VIEW = 260;                 // crop window, CSS px (square)
+  var WORK_MAX = 1024;
+
+  function loadPhotoFile(file, done) {
+    if (!file) { done(null); return; }
+    if (file.type && !/^image\//.test(file.type)) { done(null); return; }
+    var url;
+    try { url = URL.createObjectURL(file); } catch (e) { done(null); return; }
+    var img = new Image();
+    img.decoding = "async";
+    img.onload = function () {
+      var iw = img.naturalWidth, ih = img.naturalHeight;
+      var k = Math.min(1, WORK_MAX / Math.max(iw, ih));
+      var c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(iw * k));
+      c.height = Math.max(1, Math.round(ih * k));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);          // the full-size original is released now
+      img.src = "";
+      done(c);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); done(null); };
+    img.src = url;
+  }
+
+  /** Cover-fit geometry of the working image inside the square crop view. */
+  function cropGeom(cr, S) {
+    var w = cr.img.width, h = cr.img.height;
+    var s = Math.max(S / w, S / h) * cr.zoom;
+    var dw = w * s, dh = h * s;
+    var mx = Math.max(0, (dw - S) / 2), my = Math.max(0, (dh - S) / 2);
+    cr.ox = Math.max(-mx, Math.min(mx, cr.ox));
+    cr.oy = Math.max(-my, Math.min(my, cr.oy));
+    return { x: (S - dw) / 2 + cr.ox, y: (S - dh) / 2 + cr.oy, w: dw, h: dh };
+  }
+
+  function exportPhoto(cr) {
+    var out = document.createElement("canvas");
+    out.width = out.height = PHOTO_OUT;
+    var g = out.getContext("2d");
+    var k = PHOTO_OUT / CROP_VIEW, d = cropGeom(cr, CROP_VIEW);
+    g.imageSmoothingQuality = "high";
+    g.drawImage(cr.img, d.x * k, d.y * k, d.w * k, d.h * k);
+    var url = out.toDataURL("image/jpeg", 0.85);
+    if (url.length > 58000) url = out.toDataURL("image/jpeg", 0.7);
+    return url;
+  }
+
   function source(av, hurt) {
     var e = rasterEntry(av, hurt);
     if (!e.canvas) {
@@ -429,18 +540,24 @@
       step: "name",
       name: "",
       app: randomAppearance(),
+      photo: null,           // 256px JPEG data URL (local), or null
+      crop: null,            // { img: working canvas, zoom, ox, oy } while cropping
+      photoBack: "name",     // where Back goes from the photo step
       placeholder: ESA.Participants.nextGuestLabel()
     };
     var m;
 
     function close(added) {
+      st.crop = null;                                  // release the working image
+      if (!added) st.photo = null;                     // cancelled: the photo is discarded
       ESA.Modal.pop();
       if (added) { if (opts.onDone) opts.onDone(added); }
       else if (opts.onCancel) opts.onCancel();
     }
 
     function confirm() {
-      var p = ESA.Participants.addGuest(st.name, st.app);
+      var p = ESA.Participants.addGuest(st.name, st.app, st.photo);
+      st.crop = null;                                  // drop the working image
       if (!p) { ESA.Audio.play("denied"); return; }
       ESA.Audio.play("lockIn");
       close(p);
@@ -460,12 +577,12 @@
       var img = el("img", "gc-art");
       img.alt = "";
       img.draggable = false;
-      img.src = dataUrl(svg(st.app, false));
+      img.src = dataUrl(svg(st.app, false, st.photo));
       stage.appendChild(img);
       var ouch = el("img", "gc-ouch");
       ouch.alt = "";
       ouch.draggable = false;
-      ouch.src = dataUrl(svg(st.app, true));
+      ouch.src = dataUrl(svg(st.app, true, st.photo));
       ouch.title = "Hurt reaction";
       stage.appendChild(ouch);
       box.appendChild(stage);
@@ -479,8 +596,8 @@
     }
 
     function refreshArt(card) {
-      if (card.gcArt) card.gcArt.src = dataUrl(svg(st.app, false));
-      if (card.gcOuch) card.gcOuch.src = dataUrl(svg(st.app, true));
+      if (card.gcArt) card.gcArt.src = dataUrl(svg(st.app, false, st.photo));
+      if (card.gcOuch) card.gcOuch.src = dataUrl(svg(st.app, true, st.photo));
     }
 
     function head(card, title) {
@@ -528,8 +645,14 @@
       var rnd = button("", "btn-ghost gc-choice", function () { st.name = input.value; st.app = randomAppearance(); go("random"); });
       rnd.appendChild(el("b", "", "Randomize for me"));
       rnd.appendChild(el("small", "", "Instant fighter"));
+      var pho = button("", "btn-ghost gc-choice gc-photo-choice", function () {
+        st.name = input.value; st.photoBack = "name"; go("photo");
+      });
+      pho.appendChild(el("b", "", "Use My Photo"));
+      pho.appendChild(el("small", "", "Your face, our fighter"));
       choices.appendChild(cust);
       choices.appendChild(rnd);
+      choices.appendChild(pho);
       card.appendChild(choices);
       card.gcFocus = (ESA.Touch && ESA.Touch.active) ? null : input;
     }
@@ -590,6 +713,7 @@
       var layout = el("div", "gc-layout");
       layout.appendChild(preview(card));
       var rows = el("div", "gc-rows");
+      rows.appendChild(photoRow());
       var colorSlot = el("div", "gc-colorslot");
       function colorRow() {
         colorSlot.textContent = "";
@@ -629,6 +753,136 @@
       card.gcFocus = (ESA.Touch && ESA.Touch.active) ? null : ok;
     }
 
+    /** Photo controls inside Customize: add / replace / remove, same guest. */
+    function photoRow() {
+      var row = el("div", "gc-row gc-photo-row");
+      row.appendChild(el("div", "gc-label", "Face photo"));
+      var opts = el("div", "gc-opts gc-chips");
+      if (st.photo) {
+        var th = el("img", "gc-photo-thumb");
+        th.alt = ""; th.src = st.photo;
+        opts.appendChild(th);
+        opts.appendChild(button("Replace Photo", "btn-ghost btn-small", function () { st.photoBack = "custom"; st.crop = null; go("photo"); }));
+        opts.appendChild(button("Remove Photo", "btn-ghost btn-small", function () {
+          st.photo = null; ESA.Audio.play("toggleOff"); ESA.Modal.render();
+        }));
+      } else {
+        opts.appendChild(button("Use My Photo", "btn-ghost btn-small", function () { st.photoBack = "custom"; go("photo"); }));
+      }
+      row.appendChild(opts);
+      row.appendChild(el("div", "gc-photo-note", "Your photo stays on this device and this session only - it is never uploaded."));
+      return row;
+    }
+
+    /* PHOTO step: pick / take a photo, then position + zoom it in the oval. */
+    function buildPhoto(card) {
+      head(card, st.crop ? "Frame Your Face" : "Use My Photo");
+      var box = el("div", "gc-photo");
+      var note = el("div", "gc-photo-note", "Your photo stays on this device and this session only - it is never uploaded or shared.");
+
+      function picker(label, cls, capture) {
+        var inp = el("input", "gc-file");
+        inp.type = "file";
+        inp.accept = "image/jpeg,image/png,image/webp,image/*";
+        if (capture) inp.setAttribute("capture", "user");
+        inp.addEventListener("change", function () {
+          var f = inp.files && inp.files[0];
+          inp.value = "";
+          if (!f) return;
+          loadPhotoFile(f, function (c) {
+            if (!c) { ESA.Audio.play("denied"); status.textContent = "That file couldn't be opened as a photo. Try a JPEG or PNG."; return; }
+            st.crop = { img: c, zoom: 1.15, ox: 0, oy: 0 };
+            ESA.Audio.play("uiClick");
+            ESA.Modal.render();
+          });
+        });
+        var b = button(label, cls, function () { inp.click(); });
+        box.appendChild(inp);
+        return b;
+      }
+      var status = el("div", "gc-hint", "");
+
+      if (!st.crop) {
+        var pick = el("div", "gc-choices gc-photo-pick");
+        pick.appendChild(picker("Choose Photo", "btn-gold gc-choice is-primary", false));
+        // Phones / tablets: straight to the front camera where supported.
+        if (ESA.Touch && ESA.Touch.active) pick.appendChild(picker("Take Selfie", "btn-ghost gc-choice", true));
+        else pick.classList.add("is-single");     // no camera button: centre the one action
+        box.appendChild(pick);
+        box.appendChild(status);
+        box.appendChild(note);
+        card.appendChild(box);
+        var foot0 = el("div", "gc-foot");
+        foot0.appendChild(button("← Back", "btn-ghost btn-small", function () { go(st.photoBack); }));
+        card.appendChild(foot0);
+        return;
+      }
+
+      // Crop view: drag to position, slider to zoom; the oval is the face.
+      var wrap = el("div", "gc-crop-wrap");
+      var cv = el("canvas", "gc-crop");
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      cv.width = cv.height = Math.round(CROP_VIEW * dpr);
+      wrap.appendChild(cv);
+      var mask = el("span", "gc-crop-mask");
+      wrap.appendChild(mask);
+      box.appendChild(wrap);
+      var cr = st.crop;
+      function draw() {
+        var g = cv.getContext("2d");
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.clearRect(0, 0, CROP_VIEW, CROP_VIEW);
+        var d = cropGeom(cr, CROP_VIEW);
+        g.drawImage(cr.img, d.x, d.y, d.w, d.h);
+      }
+      draw();
+      var drag = null;
+      cv.addEventListener("pointerdown", function (e) {
+        e.preventDefault();
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: cr.ox, oy: cr.oy };
+        try { cv.setPointerCapture(e.pointerId); } catch (er) { /* ignore */ }
+      });
+      cv.addEventListener("pointermove", function (e) {
+        if (!drag || drag.id !== e.pointerId) return;
+        var r = cv.getBoundingClientRect(), k = CROP_VIEW / (r.width || CROP_VIEW);
+        cr.ox = drag.ox + (e.clientX - drag.x) * k;
+        cr.oy = drag.oy + (e.clientY - drag.y) * k;
+        draw();
+      });
+      var endDrag = function () { drag = null; };
+      cv.addEventListener("pointerup", endDrag);
+      cv.addEventListener("pointercancel", endDrag);
+      cv.addEventListener("wheel", function (e) {
+        e.preventDefault();
+        cr.zoom = Math.max(1, Math.min(4, cr.zoom * (e.deltaY < 0 ? 1.08 : 0.93)));
+        zoom.value = cr.zoom;
+        draw();
+      }, { passive: false });
+      var zrow = el("label", "gc-zoom");
+      zrow.appendChild(el("span", "", "Zoom"));
+      var zoom = el("input", "");
+      zoom.type = "range"; zoom.min = "1"; zoom.max = "4"; zoom.step = "0.01"; zoom.value = String(cr.zoom);
+      zoom.addEventListener("input", function () { cr.zoom = Number(zoom.value) || 1; draw(); });
+      zrow.appendChild(zoom);
+      box.appendChild(zrow);
+      box.appendChild(el("div", "gc-hint", "Drag to position your face inside the oval."));
+      box.appendChild(note);
+      card.appendChild(box);
+
+      var foot = el("div", "gc-foot is-crop");
+      foot.appendChild(button("← Back", "btn-ghost btn-small", function () { st.crop = null; go(st.photoBack); }));
+      foot.appendChild(button("Different Photo", "btn-ghost btn-small", function () { st.crop = null; ESA.Modal.render(); }));
+      var ok = button("✓ Use This Photo", "btn-gold is-primary", function () {
+        st.photo = exportPhoto(cr);
+        st.crop = null;                                // release the working image
+        ESA.Audio.play("lockIn");
+        go("custom");
+      });
+      foot.appendChild(ok);
+      card.appendChild(foot);
+      card.gcFocus = (ESA.Touch && ESA.Touch.active) ? null : ok;
+    }
+
     function buildRandom(card) {
       head(card, "Your Guest");
       var layout = el("div", "gc-layout is-random");
@@ -654,6 +908,7 @@
         card.setAttribute("data-step", st.step);
         if (st.step === "name") buildName(card);
         else if (st.step === "custom") buildCustom(card);
+        else if (st.step === "photo") buildPhoto(card);
         else buildRandom(card);
         if (card.gcFocus) setTimeout(function () { if (card.isConnected) card.gcFocus.focus({ preventScroll: true }); }, 30);
       },
@@ -663,6 +918,7 @@
         if (code === "Escape") {
           e.preventDefault();
           if (st.step === "name") { ESA.Audio.play("uiBack"); close(null); }
+          else if (st.step === "photo") { st.crop = null; go(st.photoBack); }
           else go("name");
           return true;
         }
@@ -716,6 +972,7 @@
     source: source,
     /** Starts loading a guest's art so the first game frame has it. */
     warm: function (av) { if (av && av.isGuest) { rasterEntry(av, false); rasterEntry(av, true); } },
+    refresh: refresh,
     forget: function (p) {
       var av = avatarsById[p.participantId];
       if (!av) return;

@@ -621,9 +621,28 @@
       recoilY: 0,
       // Fraction of a knockback left after one second (games may tune it:
       // a lower value = a shorter, snappier shove).
-      recoilDecay: opts.recoilDecay || 0.0045
+      recoilDecay: opts.recoilDecay || 0.0045,
+      // Optional momentum model (see movePlayer). null = classic instant
+      // start / stop, exactly as before.
+      smooth: opts.smooth || null,
+      vx: 0,
+      vy: 0
     };
   };
+
+  /*
+   * Momentum model for arena movement (V4.1, Bomb Pass). Per second,
+   * exponential approach - frame-rate independent. Velocity is split into
+   * ALONG the stick and SIDEWAYS to it and each part is steered at its
+   * own rate, so a new direction takes over almost at once while starting
+   * and stopping keep a touch of weight. The TOP SPEED is still p.speed:
+   * velocity only ever approaches it from below (nothing overshoots).
+   *   accel    speeding up along the stick         ~0.09 s to 90%
+   *   reverse  velocity pointing against the stick ~0.07 s
+   *   turn     sideways velocity on a turn          ~0.08 s
+   *   brake    stick released                      ~0.10 s to 10%
+   */
+  ESA.SMOOTH_MOVE = { accel: 26, reverse: 34, turn: 30, brake: 23 };
 
   /* ------------------------------------------------------------------ *
    * Movement
@@ -633,16 +652,50 @@
   ESA.movePlayer = function (p, dt, bounds, enabled) {
     // Normalized intent from every source (keyboard: identical to the old
     // digital WASD / arrows vector; touch: analog joystick, length <= 1).
-    var v = enabled ? ESA.Controls.vector(p.slot) : null;
+    var v = enabled && !p.frozen ? ESA.Controls.vector(p.slot) : null;
+    // A game may set p.reversed (Coin Rush's cursed REVERSE pickup): the
+    // already-resolved intent (last-pressed-wins, normalised diagonals, or
+    // the analog stick) is flipped on both axes - nothing else changes.
+    if (v && p.reversed) v = { x: -v.x, y: -v.y };
     var dx = v ? v.x : 0, dy = v ? v.y : 0;
+    if (v && p.track) ESA.Dash.track(p.track, v);
 
-    p.moving = (dx !== 0 || dy !== 0);
+    var held = (dx !== 0 || dy !== 0);
+    var ox = p.x, oy = p.y;
 
-    if (p.moving) {
-      p.x += dx * p.speed * dt;
-      p.y += dy * p.speed * dt;
-      if (dx < -0.1) p.facing = "left";
-      if (dx > 0.1) p.facing = "right";
+    if (p.smooth) {
+      var S = p.smooth;
+      if (held) {
+        var mag = Math.min(1, Math.hypot(dx, dy));
+        var ux = dx / (Math.hypot(dx, dy) || 1), uy = dy / (Math.hypot(dx, dy) || 1);
+        var along = p.vx * ux + p.vy * uy;
+        var sx = p.vx - along * ux, sy = p.vy - along * uy;
+        var target = mag * p.speed;
+        var rate = along < 0 ? S.reverse : along > target ? S.turn : S.accel;
+        along += (target - along) * (1 - Math.exp(-rate * dt));
+        var keepSide = Math.exp(-S.turn * dt);
+        p.vx = along * ux + sx * keepSide;
+        p.vy = along * uy + sy * keepSide;
+      } else {
+        var keep = Math.exp(-S.brake * dt);
+        p.vx *= keep; p.vy *= keep;
+        if (Math.abs(p.vx) < 3) p.vx = 0;
+        if (Math.abs(p.vy) < 3) p.vy = 0;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.moving = held || Math.hypot(p.vx, p.vy) > 30;
+      // Facing follows real motion, with a little hysteresis (no flicker).
+      if (p.vx < -24 || (held && dx < -0.1)) p.facing = "left";
+      else if (p.vx > 24 || (held && dx > 0.1)) p.facing = "right";
+    } else {
+      p.moving = held;
+      if (p.moving) {
+        p.x += dx * p.speed * dt;
+        p.y += dy * p.speed * dt;
+        if (dx < -0.1) p.facing = "left";
+        if (dx > 0.1) p.facing = "right";
+      }
     }
 
     // Recoil decays toward zero (knockback from a bomb pass or a hit).
@@ -657,13 +710,23 @@
     }
 
     // Guard against any NaN sneaking in, then clamp inside the arena.
-    p.x = ESA.clamp(ESA.safe(p.x, p.spawnX), bounds.left, bounds.right);
-    p.y = ESA.clamp(ESA.safe(p.y, p.spawnY), bounds.top, bounds.bottom);
+    var cx = ESA.clamp(ESA.safe(p.x, p.spawnX), bounds.left, bounds.right);
+    var cy = ESA.clamp(ESA.safe(p.y, p.spawnY), bounds.top, bounds.bottom);
+    if (p.smooth) {
+      // A wall stops only the blocked axis, so sliding along it stays smooth
+      // and no stored velocity "sticks" the player to the wall.
+      if (cx !== p.x) p.vx = 0;
+      if (cy !== p.y) p.vy = 0;
+    }
+    p.x = cx; p.y = cy;
+    p.mvx = dt > 0 ? (p.x - ox) / dt : 0;
+    p.mvy = dt > 0 ? (p.y - oy) / dt : 0;
 
     // Animation clock advances faster while walking.
     p.animTime += dt * (p.moving ? 9.2 : 2.1);
 
-    var targetLean = p.moving ? (p.facing === "left" ? -0.07 : 0.07) : 0;
+    var targetLean = p.smooth ? ESA.clamp(p.vx / p.speed, -1, 1) * 0.07
+                   : (p.moving ? (p.facing === "left" ? -0.07 : 0.07) : 0);
     p.lean += (targetLean - p.lean) * Math.min(1, dt * 9);
   };
 
@@ -829,9 +892,13 @@
 
     /* --- Sprite ----------------------------------------------------- */
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,.32)";
-    ctx.shadowBlur = 12;
-    ctx.shadowOffsetY = 6;
+    // shadowBlur on a large sprite is one of the most expensive canvas
+    // operations on phones; lower quality tiers keep only the contact shadow.
+    if (!ESA.Quality || ESA.Quality.fx.shadows) {
+      ctx.shadowColor = "rgba(0,0,0,.32)";
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 6;
+    }
     ESA.drawSpriteBlend(ctx, p.character.id, ESA.hurtBlend(p, now), p.x, p.y, {
       height: h,
       flip: p.facing === "left",

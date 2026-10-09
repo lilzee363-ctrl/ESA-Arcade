@@ -92,6 +92,7 @@
   }
 
   function boot() {
+    if (ESA.Quality) ESA.Quality.init();   // before the stage sizes its canvas
     ESA.Screens.init();
     ESA.UI.init();
     ESA.Stage.init(ESA.byId("gameCanvas"));
@@ -103,7 +104,8 @@
     ESA.Attract.init();
     ESA.Touch.init();
 
-    buildDust(ESA.byId("ambDust"), 14);
+    // Phones get a lighter dust field (pure decoration).
+    buildDust(ESA.byId("ambDust"), ESA.Touch && ESA.Touch.active ? 8 : 14);
     buildBulbs(ESA.byId("bezelBulbs"), 28);
     installParallax();
     wireGlobal();

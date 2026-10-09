@@ -29,18 +29,66 @@
       update() writes intent.x / intent.y and may set intent.action.
    3. Set soloEligible: true in the game's registry entry.
    The Solo menus, difficulty screen, results and Session Stats pick it up.
+
+   DIFFICULTY = THINKING, NEVER PHYSICS (V4.1)
+   -------------------------------------------
+   Every difficulty plays to WIN: it attacks, defends, reacts to threats
+   and uses the game's mechanics. What changes is decision QUALITY - how
+   fast it notices and reacts, how well it predicts, how accurate its aim
+   and routes are and how often it makes a human mistake. Movement speed,
+   acceleration, hitboxes, dash strength / cooldown and every status
+   effect are the game's own rules, identical for a human and every CPU:
+   the controller hands the game a stick of length <= 1 and nothing else.
+   A strategy must NEVER scale its stick down by difficulty (it may ease
+   off near a target, exactly like a thumb would).
+
+   The shared PROFILES below are the common language; a strategy merges
+   its game-specific extras on top with ESA.CPU.tune(extras) and receives
+   the merged table as opts.profile.
    ========================================================================== */
 
 (function (ESA) {
   "use strict";
 
   var DIFFICULTIES = [
-    { id: "easy",   label: "Easy",   blurb: "Learning the ropes.", color: "#5fd38a" },
+    { id: "easy",   label: "Easy",   blurb: "Plays to win. Thinks slowly.", color: "#5fd38a" },
     { id: "normal", label: "Normal", blurb: "Ready for a fight.",  color: "#f3c35a" },
     { id: "hard",   label: "Hard",   blurb: "No mercy.",           color: "#ff5468" }
   ];
   var byDiff = Object.create(null);
   DIFFICULTIES.forEach(function (d) { byDiff[d.id] = d; });
+
+  /**
+   * Shared difficulty profiles - decision quality only.
+   *   reaction     [min, max] s before a NEW plan takes effect
+   *   decision     s between decisions (+ up to 35% jitter)
+   *   prediction   0..1 how far ahead / how well it reads motion
+   *   bounces      wall bounces it can foresee
+   *   aimError     px of random error on aim points
+   *   routeError   px of random error on positions / routes
+   *   mistake      chance per decision of a misjudged plan
+   *   hesitate     chance per decision to keep the old plan
+   *   notice       [min, max] s before it notices a NEW opportunity (pickup)
+   *   opportunity  0..1 how wisely it weighs a risky opportunity
+   *   dashUse      chance to spend a ready dash when it would pay off
+   */
+  var PROFILES = {
+    easy: {
+      reaction: [0.22, 0.34], decision: 0.22, prediction: 0.35, bounces: 0,
+      aimError: 46, routeError: 30, mistake: 0.14, hesitate: 0.07,
+      notice: [1.0, 1.8], opportunity: 0.45, dashUse: 0.4
+    },
+    normal: {
+      reaction: [0.12, 0.19], decision: 0.13, prediction: 0.7, bounces: 1,
+      aimError: 22, routeError: 13, mistake: 0.05, hesitate: 0.025,
+      notice: [0.45, 0.8], opportunity: 0.75, dashUse: 0.7
+    },
+    hard: {
+      reaction: [0.065, 0.1], decision: 0.08, prediction: 1, bounces: 2,
+      aimError: 9, routeError: 5, mistake: 0.015, hesitate: 0.008,
+      notice: [0.15, 0.3], opportunity: 0.95, dashUse: 0.9
+    }
+  };
 
   var strategies = Object.create(null);
 
@@ -52,7 +100,10 @@
     var def = strategies[gameId];
     this.slot = slot;
     this.difficulty = byDiff[difficulty] ? difficulty : "normal";
-    this.brain = def.create({ slot: slot, difficulty: this.difficulty });
+    this.brain = def.create({
+      slot: slot, difficulty: this.difficulty,
+      profile: (def.params && def.params[this.difficulty]) || PROFILES[this.difficulty]
+    });
     this.view = {};                        // reused every frame - no per-frame garbage
     this.intent = { x: 0, y: 0, action: null };
     this.live = { x: 0, y: 0 };            // what the provider reports
@@ -107,6 +158,39 @@
     DIFFICULTIES: DIFFICULTIES,
 
     difficulty: function (id) { return byDiff[id] || byDiff.normal; },
+
+    PROFILES: PROFILES,
+
+    /** The shared decision-quality profile for a difficulty. */
+    profile: function (id) { return PROFILES[id] || PROFILES.normal; },
+
+    /**
+     * Shared profile + game-specific extras, per difficulty:
+     *   ESA.CPU.tune({ easy: {...}, normal: {...}, hard: {...} })
+     * Extras may add fields or override shared ones, but never a speed.
+     */
+    tune: function (extras) {
+      var out = {};
+      DIFFICULTIES.forEach(function (d) {
+        var m = {}, k, base = PROFILES[d.id], add = (extras && extras[d.id]) || {};
+        for (k in base) m[k] = base[k];
+        for (k in add) m[k] = add[k];
+        out[d.id] = m;
+      });
+      return out;
+    },
+
+    /** Small helpers every strategy shares (no allocation). */
+    util: {
+      rand: function (a, b) { return a + Math.random() * (b - a); },
+      clamp: function (v, a, b) { return v < a ? a : v > b ? b : v; },
+      chance: function (p) { return Math.random() < p; },
+      /** Reaction delay: continuing the same idea is near-instant, a new one waits. */
+      reactDelay: function (P, same) {
+        return same ? Math.random() * P.reaction[0] * 0.5 : P.reaction[0] + Math.random() * (P.reaction[1] - P.reaction[0]);
+      },
+      nextDecision: function (P) { return P.decision * (1 + Math.random() * 0.35); }
+    },
 
     /** def: { create(opts) -> { update(dt, view, intent), reset() } } */
     registerStrategy: function (gameId, def) {

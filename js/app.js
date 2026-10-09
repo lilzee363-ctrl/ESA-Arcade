@@ -58,6 +58,31 @@
 
     current: function () { return this.screens[this.state] || null; },
 
+    /*
+     * NAVIGATION LOCK. A navigation is "in flight" from the moment it is
+     * committed until the veil has fully cleared:
+     *   commit (goLater)  -> pendingNav = true   (short "chosen!" animation)
+     *   App.go            -> pendingNav = false, ESA.Screens.busy = true
+     *   veil cleared      -> ESA.Screens.busy = false
+     * While in flight, Back / Esc / other navigation is ignored, so a
+     * mashed key can never start a second transition. No fixed debounce:
+     * the lock ends exactly when the transition does. Gameplay input never
+     * goes through this (the play screen's keys are not gated by it).
+     */
+    pendingNav: false,
+
+    /** True while a screen change is committed or running. */
+    navBusy: function () { return this.pendingNav || ESA.Screens.busy; },
+
+    /** Commit a navigation that starts after a short screen-scoped animation. */
+    goLater: function (ms, fn) {
+      if (this.navBusy()) return false;
+      var self = this;
+      this.pendingNav = true;
+      this.timers.after(ms, function () { self.pendingNav = false; fn(); });
+      return true;
+    },
+
     /**
      * Change screen. Ignored while a transition is already running, which
      * makes double clicks and key mashing harmless.
@@ -66,6 +91,7 @@
       var next = this.screens[name];
       if (!next) { console.warn("[ESA] Unknown screen:", name); return false; }
       if (ESA.Screens.busy) return false;
+      this.pendingNav = false;           // the committed navigation is now running
 
       var self = this;
       var prev = this.current();
@@ -97,6 +123,7 @@
 
     _swap: function (prev, next, name, params) {
       this.timers.clear();
+      this.pendingNav = false;           // a goLater() timer died with the old screen
       Modal.clear();
       if (prev && typeof prev.leave === "function") {
         try { prev.leave(name); } catch (e) { console.error("[ESA] leave failed:", e); }
@@ -120,7 +147,7 @@
     /** Logical Back for the current screen. */
     back: function () {
       var c = this.current();
-      if (!c || Modal.active() || ESA.Screens.busy) return;
+      if (!c || Modal.active() || this.navBusy()) return;
       if (typeof c.back === "function") { c.back(); return; }
       var parent = typeof c.parent === "function" ? c.parent() : c.parent;
       if (parent) {
@@ -136,8 +163,8 @@
         if (code === "Escape") { e.preventDefault(); ESA.Touch.closeEditor(); }
         return;
       }
-      if (ESA.Screens.busy) {
-        if (code === "Space" || code === "Enter") e.preventDefault();
+      if (this.navBusy()) {
+        if (code === "Space" || code === "Enter" || code === "Escape") e.preventDefault();
         return;
       }
 
@@ -379,13 +406,25 @@
   var lastTime = 0;
   var playEl = null;
 
+  /*
+   * After the result card is up, the arena keeps animating only while the
+   * celebration plays (confetti lives <= 2.4 s). Then the loop STOPS: the
+   * frozen last frame sits under the card's blurred backdrop instead of
+   * re-rendering (and re-blurring) 60 times a second for nothing.
+   */
+  var RESULT_SETTLE_MS = 2600;
+
   /* --- The one and only game loop --------------------------------- */
   function frame(now) {
     rafId = requestAnimationFrame(frame);
     if (!Run || !Run.game || Run.paused) return;
 
-    var dt = Math.min((now - lastTime) / 1000, 0.033);
+    var raw = now - lastTime;
+    var dt = Math.min(raw / 1000, 0.033);
     lastTime = now;
+    // Decoration-only quality tier (js/quality.js) watches real frame time.
+    if (ESA.Quality && !Run.ended) ESA.Quality.frame(raw);
+    if (Run.ended && Run.resultAt && now - Run.resultAt > RESULT_SETTLE_MS) { stopLoop(); return; }
 
     // Hit-stop pauses simulation but keeps shake and rendering alive.
     if (!ESA.Stage.isFrozen(now)) {
@@ -411,6 +450,7 @@
   function stopLoop() {
     cancelAnimationFrame(rafId);
     rafId = 0;
+    if (ESA.Quality) ESA.Quality.idle();
   }
 
   function teardownRun() {
@@ -421,6 +461,7 @@
     if (Run && Run.cpu) Run.cpu.destroy();
     ESA.Controls.release();                 // every slot back to the human sources
     ESA.Controls.setKeyboardAlias(false);
+    if (ESA.Dash) ESA.Dash.disable();
     Run = null;
     if (ESA.Touch) ESA.Touch.unmount();     // pointers, overlays, pre-roll, editor
     ESA.UI.clearAll();
@@ -634,7 +675,8 @@
       if (!Run) return;
       if (ESA.UI.isResultVisible()) {
         // The match is over: Esc takes the "leave" option, never a rematch.
-        if (performance.now() - Run.resultAt < 450) return;
+        // Not during result protection - a mashed Esc (pause) is not a choice.
+        if (ESA.UI.resultProtected()) return;
         if (Run.context.mode === "tournament") ESA.UI.triggerDefaultResult();
         else { ESA.Audio.play("uiBack"); App.go(Run.context.mode === "solo" ? "soloGames" : "library"); }
         return;
@@ -645,11 +687,13 @@
     onKey: function (code) {
       if (!Run || !Run.game || Run.paused) return;
       if (ESA.UI.isResultVisible()) {
-        // A short guard stops a key mashed at the final second from
-        // instantly triggering the rematch.
-        if (isEnter(code) && performance.now() - Run.resultAt > 600) ESA.UI.triggerDefaultResult();
+        // Enter is also a gameplay key (dash / action): while the result is
+        // protected only a real press of a result button counts.
+        if (isEnter(code) && !ESA.UI.resultProtected()) ESA.UI.triggerDefaultResult();
         return;
       }
+      // Shared double-tap dash (only for games that declare a dash).
+      if (ESA.Dash) ESA.Dash.keyDown(code);
       if (typeof Run.game.onKeyDown === "function") Run.game.onKeyDown(code);
     }
   });
@@ -678,6 +722,7 @@
     // not told - it keeps reading ESA.Controls like it always does.
     // Solo: one human on the keyboard - arrows / Enter work for them too.
     ESA.Controls.setKeyboardAlias(Run.context.mode === "solo");
+    if (ESA.Dash) ESA.Dash.enable(Run.def);
     if (Run.context.mode === "solo" && Run.context.cpuSlot && ESA.CPU) {
       Run.cpu = ESA.CPU.attach(Run.def.id, Run.context.cpuSlot, Run.context.difficulty);
       if (!Run.cpu) console.warn("[ESA] No CPU strategy for", Run.def.id);
@@ -713,6 +758,20 @@
 
   App.pause = pause;
   App.resume = resume;
+
+  /**
+   * The loop is stopped while paused and once a result has settled. A
+   * canvas resize (window, rotation, quality tier) clears the backing
+   * store, so repaint that frozen frame once instead of leaving it blank.
+   */
+  App.redrawFrozen = function () {
+    if (!Run || !Run.game || rafId) return;
+    try {
+      var ctx = ESA.Stage.begin();
+      Run.game.draw(ctx, performance.now());
+      ESA.Stage.end();
+    } catch (e) { /* a torn-down game simply stays blank */ }
+  };
   App.currentRun = function () { return Run; };
 
   /* --- Init (called from main.js) --------------------------------- */

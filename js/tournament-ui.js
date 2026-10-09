@@ -172,7 +172,7 @@
     var host = byId("psRoster");
     host.innerHTML = "";
     ps.tiles = ps.entries.map(function (e, i) {
-      var b = ESA.rosterTile(e, i, "ps");
+      var b = ESA.rosterTile(e, i, "ps", { onGuestDeleted: psGuestDeleted });
       if (e.kind === "char") {
         b.insertAdjacentHTML("beforeend",
           '<span class="ps-vars" aria-hidden="true"><i class="pv-n">N</i><i class="pv-e">E</i></span>');
@@ -183,6 +183,15 @@
       return b;
     });
     ps.cols = ESA.sizeRoster(host, host.parentNode, ps.entries.length, null, { max: 180 });
+  }
+
+  /** A Guest was deleted: rebuild (psRender drops them from the picks). */
+  function psGuestDeleted() {
+    if (App.state !== "participants") return;
+    ps.entries = ESA.rosterEntries();
+    ps.focus = Math.min(ps.focus, ps.entries.length - 1);
+    psBuild();
+    psRender();
   }
 
   function psActivate(i) {

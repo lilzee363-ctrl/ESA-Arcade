@@ -54,7 +54,9 @@
   min-height: 0;
   display: grid;
   place-items: center;
-  overflow: auto;
+  overflow-x: hidden;          /* V4.1: rows only, never a horizontal scroll */
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .ps-tile {
   --cc: var(--gold-400);

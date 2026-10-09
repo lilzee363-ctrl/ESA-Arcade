@@ -147,7 +147,7 @@ Controls belong to the PLAYER SLOT, not the character:
    P2  Arrow keys      ·  J K L (Bonk Booth)  ·  Enter = select / confirm
    Character select is SELECT -> CONFIRM -> LOCKED IN: the first press,
    click or tap only previews a fighter; Confirm (or the select key again)
-   locks in; Change / moving / tapping another fighter / Back cancels the
+   locks in; moving / tapping another fighter / Back changes or drops the
    preview. Mouse and touch pick for P1 first, then P2.
    Roster grids (Casual + Who's Playing) use explicit column counts on
    touch: phone portrait 3, tablet portrait 4, phone landscape 6, tablet
@@ -172,11 +172,25 @@ draw.
 GAMES
 -----
 1) Bomb Pass          First to 3 rounds         P1 WASD  /  P2 Arrows
+                      Every real pass adds +1.0 s to the fuse (capped at
+                      the round's starting fuse); one contact = one pass
+                      (the pair must separate before the next). Visible fuse
+                      ring + seconds badge. OVERTIME: past its starting fuse
+                      a round burns up to x2 faster, so trading can't stall.
 2) Coin Rush          60 seconds (can tie)      P1 WASD  /  P2 Arrows
+                      +3 token lives 6.5 s (draining ring). SPEED BOOTS
+                      x1.35 for 5 s, MAGNET 170 px pull for 6 s (both refresh,
+                      never stack), TRAPS 7 s on the floor -> 4.0 s stun.
+                      Versus: pickups / traps spawn about equidistant from
+                      both players. Solo: the tokens move.
 3) Bonk Booth         42 seconds (can tie)      P1 A S D /  P2 J K L
-                      +1 correct hole, -1 wrong hole / empty booth, -2 bomb;
-                      one attempt per pop-up (mashing loses); speeds up
-                      over the round. Scores can go negative.
+                      +1 target, -1 empty hole / too late, -2 bomb. One
+                      SHARED schedule feeds both players (same bombs, same
+                      chances). Up to 2 targets at once, an occasional 3rd
+                      late; the glow cue fades out. No lockout after a miss.
+                      CLUTCH (versus): 4+ / 8+ points behind = +9% / +14%
+                      reaction window on normal targets. Solo: arrows / J K L
+                      also work. Scores can go negative.
 4) Air Hockey         First to 5 / Tournament: first to 3 OR 90 s
                                                 P1 WASD+Space / P2 Arrows+Enter
 
@@ -189,7 +203,8 @@ AIR HOCKEY: the characters ARE the mallets. Everyone shares one circular
 collider (MALLET_R) no matter how wide their art is; the sprite is drawn
 at a standard size on top of it. Each player is locked to their own half.
 Conceding swaps to the hurt sprite until the faceoff. Power-ups spawn
-near the centre line (one at a time, every 15-22 s of play) and always
+near the centre line (one at a time, every 9-14 s of play; a shuffle bag
+means never the same type twice in a row, even across rematches) and always
 hit the OPPONENT of whoever grabs them:
    SMACK               a random OTHER ESA member runs in: 3.0 s stun
    GARA EH YA AMR??!!  speech-bubble meltdown: 3.0 s stun
@@ -263,6 +278,9 @@ js/controls.js          ESA.Controls: normalized input from keyboard / touch / C
 js/cpu.js               ESA.CPU: generic CPU controller + difficulty list.
 js/cpu-airhockey.js     Air Hockey CPU strategy.
 js/cpu-bombpass.js      Bomb Pass CPU strategy.
+js/dash.js              ESA.Dash: shared directional dash + keyboard double-tap.
+js/clutch.js            ESA.Clutch: opt-in comeback assist (Bonk Booth).
+js/quality.js           ESA.Quality: adaptive decoration tiers, ?perf overlay.
 js/solo-stats.js        ESA.SoloStats: Versus record + Score Attack (sessionStorage).
 js/solo.js              Solo screens, CPU opponent pick, Solo results.
 js/touch.js             ESA.Touch: touch mode, joystick + buttons (multitouch),
@@ -336,19 +354,26 @@ Movement speeds and match lengths are constants at the top of each game
 file. V2 speeds are roughly 23% below V1 on purpose - these games are meant
 to be playable by people who do not play video games.
 
-    bombpass.js   PLAYER_SPEED 180, FUSE_MIN/MAX 10-18, WINS_NEEDED 3
-    coinrush.js   PLAYER_SPEED 185, MATCH_SECONDS 60, TOKEN_COUNT 7
+    bombpass.js   PLAYER_SPEED 180, FUSE_MIN/MAX 10-18, WINS_NEEDED 3,
+                  PASS_BONUS 1.0, REARM_DIST, OVERTIME_RAMP 8, ESA.SMOOTH_MOVE
+    coinrush.js   PLAYER_SPEED 185, MATCH_SECONDS 60, TOKEN_COUNT 7,
+                  BONUS_LIFE 6.5, DRIFT_*, BOOTS_*, MAGNET_*, TRAP_*
     bonkbooth.js  MATCH_SECONDS 42 (Solo SOLO_SECONDS 50), CURVE (early -> late value of every
-                  stage: gap, tell, rise, active, retreat, stun, bomb
-                  chance), LATE_GRACE_RISE. (stun is how long a bonked rival
-                  is held up showing their hurt art - shorten it and the
-                  payoff stops reading)
+                  stage: interval, tell, rise, active, retreat, stun, bomb
+                  chance, cue), maxActive(), CLUTCH, LATE_GRACE_RISE. (stun
+                  is how long a bonked rival is held up showing their hurt
+                  art - shorten it and the payoff stops reading)
 
     airhockey.js  TARGETS (casual 5 / tournament 3), MOVE_SPEED 290,
-                  DASH_* (cooldown 1.7 s), PUCK_MAX 980, PUCK_DRAG.
-    powerups.js   SHRINK_SCALE 0.58, durations on each type, spawn 15-22 s.
-    status-effects.js  IMMUNITY_MS 2000. neutralMods() is the hook for a future comeback
-                  system (speed, dash cooldown, collider radius) - unused today.
+                  DASH_* (cooldown 1.7 s), PUCK_MAX 1068 (was 980),
+                  HIT_SPEED_BOOST 1.09, PUCK_DRAG.
+    powerups.js   SHRINK_SCALE 0.58, durations on each type (Air Hockey
+                  spawns them every 9-14 s).
+    status-effects.js  IMMUNITY_MS 2000.
+    clutch.js     shared opt-in comeback assist (only Bonk Booth uses it).
+    dash.js       DOUBLE_TAP_MS 250 (shared directional dash).
+    cpu.js        PROFILES: the shared Easy / Normal / Hard decision quality.
+    quality.js    adaptive decoration tiers (high / medium / low).
 
 Arena bounds live in js/arena.js as ESA.BOUNDS.
 
@@ -363,7 +388,11 @@ VS CPU (Air Hockey, Bomb Pass). The human is P1 (W A S D + Space / touch
 joystick + DASH). The CPU is a CPU participant ("cpu-bomb-hard-03", never a
 participant-NN id) on P2, drawn as a random permanent roster character
 (Normal 3x as likely as Evil; never your exact character + variant).
-Difficulty (Easy / Normal / Hard) changes AI behaviour only. Air Hockey:
+Difficulty (Easy / Normal / Hard) changes DECISION QUALITY only - reaction
+and decision speed, prediction, aim / route error, mistakes, how fast it
+notices a pickup. Every difficulty attacks, defends, takes pickups and
+dashes; every CPU moves at exactly the human's speed with the human's
+acceleration, dash and cooldown (shared profile in js/cpu.js). Air Hockey:
 first to 5, no clock, same power-ups and physics. Bomb Pass: first to 3
 rounds, same proximity hand-off, no pass button.
 
@@ -372,7 +401,8 @@ difficulty, no P2 controls. The game reads context.single and ends with
 result.score. Coin Rush thins the floor (7 -> 5 tokens) and drops tokens
 further away as the run goes on; Bonk Booth is one centred booth where
 random ESA members pop up, on the same early -> late curve and scoring
-(+1 / wrong -1 / bomb -2 / nothing 0, one attempt per pop-up).
+(+1 / empty hole -1 / bomb -2 / nothing 0). Coin Rush tokens drift around
+the arena in Solo, so you have to chase them.
 
 A new CPU-versus game: (1) expose observe(slot, view) - what a player can
 see, (2) ESA.CPU.registerStrategy(id, { create }), (3) soloEligible +
@@ -396,3 +426,22 @@ gone with the tab; never localStorage). Two separate records:
                  Never touches W-D-L, streaks or Hard CPU Defeated.
 Only completed matches / runs count; every Solo start gets a unique
 matchId and the recorder refuses a repeat, so results count exactly once.
+
+
+V4.1 NOTES (performance + guests)
+---------------------------------
+Adaptive quality: js/quality.js averages real frame time of the game loop
+over 3 s windows; 2 slow windows step DOWN a tier, 5 fast windows (and
+30 s since the last change) step back UP. It only trims decoration
+(sprite shadowBlur, particle counts, puck trail, idle glows, canvas
+resolution cap, menu ambience) - never input, physics, timers or CPU.
+index.html?perf shows FPS / frame time / tier / RAF callbacks per frame;
+?quality=low|medium|high pins a tier.
+Inactive screens pause their CSS animations; the game loop stops ~2.6 s
+after a result appears (and repaints once on resize).
+
+Guest face photo ("Use My Photo" in the Guest creator): chosen / taken on
+the device, framed in a round crop, resized locally to a 256x256 JPEG and
+masked into the guest's head. Never uploaded; kept in the session only
+(sessionStorage while small, otherwise memory) and never in localStorage.
+Replace / Remove live in the Customize step.

@@ -96,6 +96,35 @@
   box-shadow: 0 2px 0 rgba(0, 0, 0, .4);
   pointer-events: none;
 }
+/* Delete Guest (js/menus.js confirmDeleteGuest): a small trash button in the
+   tile's top corner - findable, but too small and too far from the centre
+   to hit by accident, and it always asks first. Tournament tiles use the
+   top-left corner (their check mark owns the top-right). */
+.guest-del {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #ffc9c2;
+  background: rgba(4, 13, 25, .8);
+  border: 1px solid rgba(255, 138, 128, .5);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .45);
+  cursor: pointer;
+  transition: background .15s, color .15s, transform .15s var(--ease-out);
+}
+.guest-del svg { width: 13px; height: 13px; pointer-events: none; }
+.ps-tile .guest-del { right: auto; left: 5px; }
+@media (hover: hover) {
+  .guest-del:hover { color: #fff; background: #b8323a; transform: scale(1.1); }
+}
+body.is-touch .guest-del { width: 28px; height: 28px; -webkit-tap-highlight-color: transparent; }
+body.is-touch .guest-del svg { width: 15px; height: 15px; }
+
 .is-add .cs-tile-img, .is-add .ps-tile-img {
   display: grid;
   place-items: center;
@@ -581,6 +610,11 @@ body.is-touch .ps-picked { flex-wrap: nowrap; max-height: none; overflow-x: auto
   .gc-foot .btn { min-width: 0; min-height: 46px; padding: 0 8px; font-size: 13px; letter-spacing: .06em; white-space: nowrap; }
   .gc-foot .is-primary { min-width: 0; }
   .modal-card.guest-creator[data-step="random"] .gc-foot { margin: 0 -14px -12px; }
+  /* Photo crop: BACK · DIFFERENT PHOTO share row 1, USE THIS PHOTO gets
+     the full second row - no squeezed labels at phone widths. */
+  .gc-foot.is-crop { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); margin: 0 -14px -12px; }
+  .gc-foot.is-crop .is-primary { grid-column: 1 / -1; }
+  .gc-foot.is-crop .btn { white-space: normal; line-height: 1.15; overflow-wrap: anywhere; }
   .gc-choices { grid-template-columns: 1fr; }
   .vsh-art { height: clamp(140px, 28vh, 220px); }
   .vsh-name { font-size: 15px; letter-spacing: .1em; }
@@ -624,3 +658,45 @@ body.is-touch .ps-picked { flex-wrap: nowrap; max-height: none; overflow-x: auto
   body.is-touch .ps-actions .btn-small { flex: 1 1 0; min-height: 44px; }
   body.is-touch .ps-actions #psStartBtn { flex: 1 1 100%; min-height: 50px; order: 2; }
 }
+
+/* --------------------------------------------------------------------------
+   V4.1 Guest face photo (all local - see js/guests.js)
+   -------------------------------------------------------------------------- */
+.gc-choices .gc-photo-choice { grid-column: 1 / -1; }
+.gc-file { display: none; }
+.gc-photo { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 4px 0 10px; }
+.gc-photo-pick { width: 100%; }
+/* Only one way in (no camera capture on this device): one centred button,
+   never a half-width button beside an empty column. */
+.gc-photo-pick.is-single { grid-template-columns: minmax(0, 1fr); width: min(100%, 340px); }
+.gc-photo-note { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.4; max-width: 34em; }
+.gc-photo-row .gc-photo-note { text-align: left; margin-top: 4px; }
+.gc-photo-thumb { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid var(--gold-400); }
+.gc-photo-row .gc-opts { align-items: center; }
+.gc-crop-wrap {
+  position: relative;
+  width: min(260px, 70vw);
+  aspect-ratio: 1;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #050f1c;
+  touch-action: none;
+  border: 2px solid rgba(243, 195, 90, .5);
+}
+.gc-crop { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.gc-crop:active { cursor: grabbing; }
+/* The face oval (same 148:160 shape the avatar uses); outside is dimmed. */
+.gc-crop-mask {
+  position: absolute;
+  left: 3.75%;
+  right: 3.75%;
+  top: 0;
+  bottom: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 999px rgba(3, 11, 22, .62);
+  outline: 2px dashed rgba(253, 238, 196, .8);
+  outline-offset: -2px;
+  pointer-events: none;
+}
+.gc-zoom { display: flex; align-items: center; gap: 10px; width: min(260px, 70vw); font-size: 12px; color: var(--muted); }
+.gc-zoom input { flex: 1; accent-color: var(--gold-400); }

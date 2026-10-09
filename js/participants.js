@@ -28,6 +28,14 @@
    refresh, gone when the tab closes). Nothing here is ever written to
    localStorage - Guests are temporary by design.
 
+   GUEST FACE PHOTOS (V4.1, optional): guestPhoto is a small square JPEG
+   data URL made ON THIS DEVICE by the Guest creator (js/guests.js) - it
+   is never uploaded, sent to any service or written to localStorage. It
+   lives in this participant object and, only while it is small
+   (<= PHOTO_MAX_CHARS, ~45 KB), in the same sessionStorage session entry,
+   so it also disappears when the tab closes. Too big / storage full: it
+   simply stays in memory for this page only.
+
    AVATARS (ESA.Avatars) are the VISUAL side, keyed by avatar id. Games
    only ever see avatars (player.character) and never need to know about
    variants or the Guest creator. A roster entry IS its Normal avatar; an
@@ -48,6 +56,9 @@
   var STORE_KEY = "esaArcade.session.v1";
   var VARIANTS = ["normal", "evil"];
   var NAME_MAX = 16;
+  var PHOTO_MAX_CHARS = 60000;
+  var PHOTO_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/;
+  function cleanPhoto(s) { return typeof s === "string" && s.length <= PHOTO_MAX_CHARS * 2 && PHOTO_RE.test(s) ? s : null; }
 
   var pool = Object.create(null);      // participantId -> participant
   var order = [];                      // live (not removed) participantIds
@@ -95,11 +106,20 @@
           characterId: p.characterId, variant: p.variant,
           displayName: p.type === "guest" ? p.displayName : undefined,
           guestNumber: p.guestNumber || undefined,
-          guestAppearance: p.guestAppearance
+          guestAppearance: p.guestAppearance,
+          // Session-only, and only while small (see GUEST FACE PHOTOS).
+          guestPhoto: p.guestPhoto && p.guestPhoto.length <= PHOTO_MAX_CHARS ? p.guestPhoto : undefined
         };
       })
     };
-    try { window.sessionStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch (e) { /* private mode etc. */ }
+    try { window.sessionStorage.setItem(STORE_KEY, JSON.stringify(data)); }
+    catch (e) {
+      // Quota: retry without photos (they stay in memory for this page).
+      try {
+        data.list.forEach(function (d) { delete d.guestPhoto; });
+        window.sessionStorage.setItem(STORE_KEY, JSON.stringify(data));
+      } catch (e2) { /* private mode etc. */ }
+    }
   }
 
   function load() {
@@ -125,7 +145,7 @@
         var name = cleanName(d.displayName) || ("Guest " + Math.max(1, d.guestNumber | 0));
         var app = ESA.Guests ? ESA.Guests.sanitize(d.guestAppearance) : null;
         if (!app) return;
-        adopt(makeGuest(d.participantId, name, app, Math.max(0, d.guestNumber | 0)));
+        adopt(makeGuest(d.participantId, name, app, Math.max(0, d.guestNumber | 0), cleanPhoto(d.guestPhoto)));
       }
     });
   }
@@ -147,7 +167,7 @@
     };
   }
 
-  function makeGuest(id, name, appearance, number) {
+  function makeGuest(id, name, appearance, number, photo) {
     return {
       participantId: id,
       type: "guest",
@@ -155,6 +175,7 @@
       characterId: null,
       variant: null,
       guestAppearance: appearance,
+      guestPhoto: photo || null,
       guestNumber: number || 0
     };
   }
@@ -238,16 +259,27 @@
      * Adds a temporary Guest. `nickname` may be blank (-> "Guest N").
      * `appearance` is sanitised against the Guest creator's parts.
      */
-    addGuest: function (nickname, appearance) {
+    addGuest: function (nickname, appearance, photo) {
       load();
       var app = ESA.Guests ? ESA.Guests.sanitize(appearance) : null;
       if (!app) return null;
       guestSeq++;
       var name = cleanName(nickname) || ("Guest " + guestSeq);
       var id = nextId();
-      var p = adopt(makeGuest(id, uniqueName(name, id), app, guestSeq));
+      var p = adopt(makeGuest(id, uniqueName(name, id), app, guestSeq, cleanPhoto(photo)));
       save();
       return p;
+    },
+
+    /** Replace (data URL) or remove (null) a Guest's face photo - same Guest. */
+    setGuestPhoto: function (id, photo) {
+      load();
+      var p = pool[id];
+      if (!p || p.type !== "guest") return false;
+      p.guestPhoto = photo ? cleanPhoto(photo) : null;
+      if (ESA.Guests) ESA.Guests.refresh(p);    // rebuild only the cached art
+      save();
+      return true;
     },
 
     /** Removes a Guest from the session. Objects stay resolvable in memory
@@ -259,8 +291,9 @@
       var i = order.indexOf(id);
       if (i >= 0) order.splice(i, 1);
       p.removed = true;
-      if (ESA.Guests) ESA.Guests.forget(p);
-      save();
+      if (ESA.Guests) ESA.Guests.forget(p);     // cached art + avatar registration
+      p.guestPhoto = null;                      // the face photo is gone from memory too
+      save();                                   // ...and from the sessionStorage entry
       return true;
     },
 

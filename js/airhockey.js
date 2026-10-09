@@ -75,8 +75,16 @@
   var DASH_HIT_WINDOW = 0.26;               // a hit this soon after a dash counts as a dash hit
 
   /* --- Puck -------------------------------------------------------- */
+  /*
+   * V4.1 pace: +9% (testers wanted scoring a touch easier / livelier).
+   *   PUCK_MAX        980 -> 1068 px/s
+   *   HIT_SPEED_BOOST x1.09 on the puck after every mallet contact
+   * Drag, restitution, sub-stepping, the anti-stuck jet and every collision
+   * rule are unchanged - faster, not pinball.
+   */
   var PUCK_R = 15;
-  var PUCK_MAX = 980;
+  var PUCK_MAX = 1068;
+  var HIT_SPEED_BOOST = 1.09;
   var PUCK_DRAG = 0.9;                      // fraction of speed kept per second
   var WALL_E = 0.9;                         // wall restitution
   var MALLET_E = 0.9;                       // mallet restitution
@@ -136,7 +144,9 @@
     this.powerUps = ESA.PowerUps ? ESA.PowerUps.createSession(POWER_UPS, {
       players: { p1: this.adapter(this.p1), p2: this.adapter(this.p2) },
       spawn: {
-        minDelay: 15, maxDelay: 22, lifetime: 10, radius: 17,
+        // V4.1: every 9-14 s of live play (was 15-22 s). Never straight off
+        // a kickoff (the session waits at least 3.5 s after GO).
+        minDelay: 9, maxDelay: 14, lifetime: 9, radius: 17,
         // Near the centre line (small jitter) so both players reach it
         // equally - neither half gets a free power-up.
         findSpot: function () {
@@ -207,7 +217,7 @@
     p.spriteH = natural.w > SPRITE_MAX_W ? SPRITE_H * (SPRITE_MAX_W / natural.w) : SPRITE_H;
     p.vx = 0; p.vy = 0;           // steered velocity
     p.mvx = 0; p.mvy = 0;         // actual displacement velocity (after clamps)
-    p.dirX = facing === "right" ? 1 : -1; p.dirY = 0;
+    p.facingMem = ESA.Dash.facing(facing === "right" ? 1 : -1, 0);   // last real movement (shared dash)
     p.dashT = 0; p.dashCd = 0; p.lastDashAt = -1e9;
     p.cheerUntil = 0;
     return p;
@@ -267,7 +277,7 @@
     p.vx = p.vy = p.mvx = p.mvy = 0;
     p.dashT = 0; p.dashCd = 0; p.lastDashAt = -1e9;
     p.moving = false;
-    p.dirX = p.slot === "p1" ? 1 : -1; p.dirY = 0;
+    p.facingMem.x = p.slot === "p1" ? 1 : -1; p.facingMem.y = 0;
   };
 
   AirHockey.prototype.destroy = function () {
@@ -318,6 +328,8 @@
     v.dashReady = me.dashCd <= 0;
     v.stunned = this.isStunned(me);
     v.opX = op.x; v.opY = op.y; v.opR = op.r;
+    v.opVX = op.mvx; v.opVY = op.mvy;
+    v.opStunned = this.isStunned(op);          // dizzy stars are on screen
     v.puckX = pk.x; v.puckY = pk.y; v.puckVX = pk.vx; v.puckVY = pk.vy;
     v.hasPickup = !!a;
     v.pickupX = a ? a.x : 0; v.pickupY = a ? a.y : 0;
@@ -342,12 +354,17 @@
     return (dx || dy) ? { x: dx, y: dy } : null;
   };
 
+  /**
+   * DASH (shared rules, js/dash.js): along the player's current movement
+   * vector at any angle, else their last real facing. The DASH key, the
+   * touch DASH button, a keyboard double-tap and a CPU press all arrive
+   * here, so they share this ONE cooldown.
+   */
   AirHockey.prototype.dash = function (p) {
     if (p.dashCd > 0 || this.isStunned(p)) return;
-    var d = this.inputDir(p) || { x: p.dirX, y: p.dirY };
-    var dl = Math.hypot(d.x, d.y) || 1;          // dash is always full strength
-    p.vx = d.x / dl * DASH_SPEED;
-    p.vy = d.y / dl * DASH_SPEED;
+    var d = ESA.Dash.direction(p.facingMem, this.inputDir(p));   // always full strength
+    p.vx = d.x * DASH_SPEED;
+    p.vy = d.y * DASH_SPEED;
     p.dashT = DASH_TIME;
     p.dashCd = DASH_COOLDOWN * this.mods[p.slot].dashCooldown;
     p.lastDashAt = this.clock;
@@ -402,7 +419,7 @@
     var maxSp = MOVE_SPEED * this.mods[p.slot].speed;
 
     if (stunned) p.dashT = 0;
-    if (dir) { var dl = Math.hypot(dir.x, dir.y); p.dirX = dir.x / dl; p.dirY = dir.y / dl; }
+    if (dir) ESA.Dash.track(p.facingMem, dir);
     p.moving = !!dir;
 
     if (p.dashT > 0) {
@@ -412,7 +429,8 @@
       // each at its own rate: old momentum stops fighting a new direction
       // almost at once, while speeding up keeps a touch of weight.
       var mag = Math.min(1, Math.hypot(dir.x, dir.y));   // analog stick: partial = slower
-      var ux = p.dirX, uy = p.dirY;
+      var dl = Math.hypot(dir.x, dir.y) || 1;
+      var ux = dir.x / dl, uy = dir.y / dl;
       var along = p.vx * ux + p.vy * uy;
       var sx = p.vx - along * ux, sy = p.vy - along * uy;
       var target = mag * maxSp;
@@ -567,6 +585,8 @@
 
     pk.vx -= (1 + MALLET_E) * vn * nx;
     pk.vy -= (1 + MALLET_E) * vn * ny;
+    pk.vx *= HIT_SPEED_BOOST;
+    pk.vy *= HIT_SPEED_BOOST;
 
     // The mallet's sideways motion nudges the puck's direction a little.
     var mn = p.mvx * nx + p.mvy * ny;
@@ -975,6 +995,9 @@
   AirHockey.prototype.drawGoalGlow = function (ctx, side) {
     var x = side === "left" ? RINK.left : RINK.right;
     var flash = this.goalFlash[side];
+    // Low quality tier: the idle goal glow (a gradient per frame) is skipped;
+    // the goal flash itself always shows.
+    if (flash <= 0.01 && ESA.Quality && !ESA.Quality.fx.glows) return;
     var pulse = 0.5 + 0.5 * Math.sin(this.clock / 520 + (side === "left" ? 0 : Math.PI));
     var a = 0.14 + pulse * 0.06 + flash * 0.55;
     var col = side === "left" ? "74,163,255" : "255,106,92";
@@ -1078,8 +1101,8 @@
     var pk = this.puck;
     var speed = Math.hypot(pk.vx, pk.vy);
 
-    // Motion trail when moving fast.
-    if (speed > 380) {
+    // Motion trail when moving fast (decoration: off on the low tier).
+    if (speed > 380 && (!ESA.Quality || ESA.Quality.fx.trails)) {
       var t = pk.trail;
       ctx.save();
       for (var i = 0; i < t.length - 2; i += 2) {
@@ -1113,7 +1136,7 @@
     title: "Air Hockey",
     tagline: "Your character IS the mallet. First to the target score wins.",
     description: "<b>Your character is the mallet.</b> Stay on your half and knock the puck into " +
-                 "the other goal. <b>Space / Enter</b> fires a short dash. Grab pickups to hit your rival " +
+                 "the other goal. <b>Space / Enter</b> (or double-tap a direction) fires a short dash. Grab pickups to hit your rival " +
                  "with a SMACK, a GARA EH YA AMR??!!, a SHRINK or a REVERSE.",
     mode: "First to " + TARGETS.casual,
     // Same game, shorter tournament matches: only the labels change here,
@@ -1127,6 +1150,8 @@
     },
     icon: { symbol: "#icoPuck" },
     controls: "hockey",
+    // Shared directional dash: DASH key / button, or double-tap a direction.
+    dash: { action: "action1" },
     touch: { movement: "joystick", actions: [{ id: "action1", label: "DASH" }],
              help: ["JOYSTICK — MOVE", "DASH — BURST", "PICKUPS — HIT YOUR RIVAL"],
              description: "<b>Your character is the mallet.</b> Use the joystick to stay on your half and knock the " +
@@ -1142,7 +1167,7 @@
     soloModeType: "cpu-versus",
     solo: { blurb: "First to 5 vs the CPU. WASD + Space to dash.", touchBlurb: "First to 5 vs the CPU. Joystick + DASH.",
             description: "<b>Your character is the mallet.</b> Move with <b>W A S D</b>, stay on your half and knock the puck " +
-                         "past the CPU. <b>Space</b> fires a short dash. Grab pickups to hit the CPU with a SMACK, " +
+                         "past the CPU. <b>Space</b> (or double-tap a direction) fires a short dash. Grab pickups to hit the CPU with a SMACK, " +
                          "a GARA EH YA AMR??!!, a SHRINK or a REVERSE - they work on it exactly like on a human." },
     enabled: true,
     create: function (api, setup) { return new AirHockey(api, setup); }

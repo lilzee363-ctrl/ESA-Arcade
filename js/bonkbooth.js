@@ -11,6 +11,18 @@
    run is a little longer (SOLO_SECONDS) and keeps the same early ->
    middle -> late curve. Same scoring: +1 / -1 / bomb -2 / nothing = 0,
    one attempt per pop-up. Reports result.score; there is no winner.
+   Solo also accepts the arrow keys (and J K L) as aliases of A S D.
+
+   V4.1
+   - FAIR: one shared schedule of pop-up events feeds both players (same
+     bombs, same chances, same windows - only the hole differs).
+   - HARDER: shorter windows and faster cadence as the round goes on, up
+     to 2 targets at once and an occasional 3rd late; the hole-glow cue
+     fades out toward the end.
+   - NO LOCKOUT: a miss is -1 and nothing else - attempts belong to each
+     target, so you can hit the next valid target straight away.
+   - CLUTCH (versus): a player 5+ / 10+ points behind gets a slightly longer
+     window on normal targets (+8% / +15%). No points, no fewer bombs.
    ========================================================================== */
 
 (function (ESA) {
@@ -61,27 +73,46 @@
   var L_FLIP = [false, false, true];
 
   /*
-   * Difficulty curve. Every stage duration eases from its EARLY value to its
-   * LATE value over the match (smoothstep on match progress), so the start is
-   * comfortable, the middle tightens and the last ~10 s are the sharpest -
-   * the late window is still ~0.9 s from the first glow, so always humanly
-   * hittable. Values are seconds; [min, max] pairs are randomised per target.
+   * Difficulty curve (V4.1 - harder, and FAIR). Every value eases from its
+   * EARLY to its LATE value over the round (smoothstep on progress), so the
+   * start is readable, the middle tightens and the end is sharp. Seconds;
+   * [min, max] pairs are randomised ONCE per scheduled event and shared by
+   * both players (see SCHEDULER below).
    */
   var CURVE = {
-    gap:        { early: [0.55, 0.75], late: [0.18, 0.28] },   // empty booth between pop-ups
-    tell:       { early: 0.40, late: 0.24 },                   // hole glows (wind-up)
-    rise:       { early: 0.20, late: 0.13 },
-    active:     { early: [1.05, 1.30], late: [0.52, 0.62] },   // up and hittable
-    bombActive: { early: [1.10, 1.35], late: [0.75, 0.90] },   // bombs linger: correct play is nothing
-    retreat:    { early: 0.22, late: 0.16 },
+    interval:   { early: [1.2, 1.45], late: [0.5, 0.64] },     // between pop-up events
+    tell:       { early: 0.32, late: 0.12 },                   // hole glow wind-up
+    rise:       { early: 0.18, late: 0.11 },
+    active:     { early: [0.95, 1.15], late: [0.46, 0.56] },   // up and hittable
+    bombActive: { early: [1.0, 1.2], late: [0.72, 0.86] },     // bombs linger: correct play is nothing
+    retreat:    { early: 0.2, late: 0.14 },
     /* How long a bonked target stays up showing its hurt art. Without this
        the hurt pose flashes by in a couple of frames and the payoff is invisible. */
-    stun:       { early: 0.46, late: 0.34 },
-    bombChance: { early: 0.12, late: 0.20 }
+    stun:       { early: 0.42, late: 0.32 },
+    bombChance: { early: 0.12, late: 0.22 },
+    /* Strength of the hole-glow cue: obvious early, faint mid-round, gone
+       in the final stretch (the rising target itself is still visible). */
+    cue:        { early: 1, late: 0 }
   };
   /* A correct key while the target is sinking still counts while it is
      at least this far up (it is visibly there) - avoids frame-perfect misses. */
   var LATE_GRACE_RISE = 0.5;
+  /* Simultaneous targets: 1 early, 2 from 25% of the round, an occasional
+     3rd in the last 30%. */
+  function maxActive(k) { return k < 0.25 ? 1 : k < 0.7 ? 2 : 3; }
+  var THIRD_CHANCE = 0.35;
+  /* A press on the same hole this soon after the last one is a key bounce /
+     double-tap, not a new attempt (never a second penalty). */
+  var PRESS_DEBOUNCE = 0.12;
+  /* CLUTCH (js/clutch.js, versus only): a little more reaction time for a
+     player who is meaningfully behind. Never points, never fewer bombs. */
+  /* V4.1 cleanup: a 5-point deficit is a real gap at Bonk pace (~45-55
+     pop-ups each per match), 10 is a rout. hold 2: CLUTCH I ends once the
+     gap is back under 3, CLUTCH II drops to I under 8 - no flicker. */
+  var CLUTCH = { tiers: [{ gap: 5, bonus: 0.08, label: "CLUTCH I" }, { gap: 10, bonus: 0.15, label: "CLUTCH II" }], hold: 2 };
+  /* Solo: the arrow keys (and J K L) work as well as A S D. */
+  var SOLO_ALIASES = { ArrowLeft: 0, ArrowDown: 1, ArrowRight: 2, KeyJ: 0, KeyK: 1, KeyL: 2 };
+  var SOLO_ALIAS_CAPS = ["←", "↓", "→"];
 
   function BonkBooth(api, setup) {
     this.api = api;
@@ -111,7 +142,15 @@
     this.state = "idle";
     this.lastShownSecond = -1;
 
-    this.targets = { p1: null, p2: null };
+    this.targets = { p1: [], p2: [] };    // every target currently in a booth (up to 3 each)
+    this.queue = { p1: [], p2: [] };      // shared events waiting for a free hole
+    this.lastHole = { p1: -1, p2: -1 };
+    this.pressAt = { p1: [-9, -9, -9], p2: [-9, -9, -9] };
+    this.clock = 0;
+    this.nextEventAt = 0;
+    this.bombRun = 0;
+    // CLUTCH comeback assist: head-to-head only (js/clutch.js).
+    this.clutch = !this.single && ESA.Clutch ? ESA.Clutch.create(CLUTCH) : null;
     this.swing = { p1: null, p2: null };   // mallet feedback
     this.holeGlow = { p1: [0, 0, 0], p2: [0, 0, 0] };
     this.holeMiss = { p1: [0, 0, 0], p2: [0, 0, 0] };   // red "wrong hole" flash
@@ -148,9 +187,16 @@
     this.holeGlow.p2 = [0, 0, 0];
     this.holeMiss.p1 = [0, 0, 0];
     this.holeMiss.p2 = [0, 0, 0];
-
-    this.targets.p1 = this.makeTarget("p1", 0.5);
-    this.targets.p2 = this.single ? null : this.makeTarget("p2", 0.8);
+    this.targets.p1 = [];
+    this.targets.p2 = [];
+    this.queue.p1 = [];
+    this.queue.p2 = [];
+    this.lastHole.p1 = this.lastHole.p2 = -1;
+    this.pressAt = { p1: [-9, -9, -9], p2: [-9, -9, -9] };
+    this.clock = 0;
+    this.nextEventAt = 0.5;          // first pop-up shortly after GO (same for both)
+    this.bombRun = 0;
+    if (this.clutch) this.clutch.reset();
 
     // Only the current matchup's backdrop stays cached.
     ESA.Stage.evictLayers("arena-bonk:", this.layerKey);
@@ -169,6 +215,8 @@
     this.state = "destroyed";
     this.timers.clear();
     this.fx.clear();
+    this.targets.p1.length = this.targets.p2.length = 0;
+    this.queue.p1.length = this.queue.p2.length = 0;
   };
 
   /* ------------------------------------------------------------------ *
@@ -194,83 +242,145 @@
     return ESA.lerp(a, b, k);
   }
 
-  /**
-   * One target EVENT per player: gap -> tell -> rise -> active -> retreat.
-   * Each event accepts exactly one meaningful attempt from its owner
-   * (`attempted`); once used, further presses in the same event are ignored.
+  /*
+   * SCHEDULER (V4.1 fairness). Pop-ups are no longer rolled separately per
+   * player. ONE shared stream of EVENTS is generated - each with its type
+   * (normal / bomb) and every timing already rolled - and every player
+   * receives the SAME events at the same moments, each on a hole of their
+   * own. Both players therefore always face the same number of bombs, the
+   * same number of scoring chances and the same windows; only the hole
+   * (which has no effect on value) differs. Luck can no longer hand one
+   * side twice the bombs.
+   *
+   * If a player's booth is momentarily full (targets still up), their copy
+   * of the event waits in a short queue and pops the moment a hole frees -
+   * it is delayed, never dropped. CLUTCH only stretches the trailing
+   * player's own window a little (see CLUTCH above).
    */
-  BonkBooth.prototype.makeTarget = function (side, gapOverride) {
+  BonkBooth.prototype.makeEvent = function () {
     var k = this.difficulty();
-    var prev = this.targets[side];
-    var hole = ESA.randInt(0, 2);
-    // Avoid the same hole twice in a row so the booth stays lively.
-    if (prev && prev.hole === hole) hole = (hole + 1 + ESA.randInt(0, 1)) % 3;
-
-    var isBomb = ESA.chance(curve("bombChance", k));
-
+    var bomb = ESA.chance(curve("bombChance", k)) && this.bombRun < 2;
+    this.bombRun = bomb ? this.bombRun + 1 : 0;
     return {
-      side: side,
-      hole: hole,
-      type: isBomb ? "bomb" : "normal",
-      phase: "gap",
-      t: 0,
-      gapFor: gapOverride !== undefined ? gapOverride : curve("gap", k),
+      type: bomb ? "bomb" : "normal",
+      k: k,
       tellFor: curve("tell", k),
       riseFor: curve("rise", k),
-      activeFor: curve(isBomb ? "bombActive" : "active", k),
-      // Solo: who pops up this time (versus: always the rival).
-      victim: this.victims ? this.victims[ESA.randInt(0, this.victims.length - 1)] : null,
+      activeFor: curve(bomb ? "bombActive" : "active", k),
       retreatFor: curve("retreat", k),
       stunFor: curve("stun", k),
-      rise: 0,
-      resolved: false,      // scored or bomb hit: hold up, then drop
-      attempted: false,     // this player's one attempt for this event is used
-      gapMissed: false,     // one "nothing there" penalty per empty gap, max
-      hitType: null,
-      reactT: 0
+      cue: Math.max(0, curve("cue", Math.min(1, k * 1.15))),
+      cap: maxActive(k),
+      third: ESA.chance(THIRD_CHANCE),
+      victim: this.victims ? this.victims[ESA.randInt(0, this.victims.length - 1)] : null
     };
   };
 
-  BonkBooth.prototype.advance = function (side, dt) {
-    var t = this.targets[side];
-    if (!t) { this.targets[side] = this.makeTarget(side); return; }
-
-    t.t += dt;
-    if (t.reactT > 0) t.reactT = Math.max(0, t.reactT - dt);
-
-    switch (t.phase) {
-      case "gap":
-        if (t.t >= t.gapFor) { t.phase = "tell"; t.t = 0; }
-        break;
-
-      case "tell":
-        // Hole glows and a shadow swells: the readable wind-up.
-        this.holeGlow[side][t.hole] = Math.max(this.holeGlow[side][t.hole], t.t / t.tellFor);
-        if (t.t >= t.tellFor) { t.phase = "rise"; t.t = 0; }
-        break;
-
-      case "rise":
-        t.rise = ESA.easeOut(ESA.clamp(t.t / t.riseFor, 0, 1));
-        if (t.t >= t.riseFor) { t.phase = "active"; t.t = 0; t.rise = 1; }
-        break;
-
-      case "active":
-        t.rise = 1;
-        if (t.t >= t.activeFor) { t.phase = "retreat"; t.t = 0; }
-        break;
-
-      case "stunned":
-        // Held up after a successful hit so the hurt art actually reads.
-        t.rise = 1;
-        if (t.t >= t.stunFor) { t.phase = "retreat"; t.t = 0; }
-        break;
-
-      case "retreat":
-        var dur = t.resolved ? t.retreatFor * 0.6 : t.retreatFor;
-        t.rise = 1 - ESA.easeIn(ESA.clamp(t.t / dur, 0, 1));
-        if (t.t >= dur) this.targets[side] = this.makeTarget(side);
-        break;
+  /** A free hole on `side` (avoids repeating the last one when it can). */
+  BonkBooth.prototype.freeHole = function (side) {
+    var list = this.targets[side], free = [];
+    for (var h = 0; h < 3; h++) {
+      var busy = false;
+      for (var i = 0; i < list.length; i++) if (list[i].hole === h) { busy = true; break; }
+      if (!busy) free.push(h);
     }
+    if (!free.length) return -1;
+    if (free.length > 1) {
+      var last = this.lastHole[side];
+      var noRepeat = free.filter(function (h) { return h !== last; });
+      if (noRepeat.length) free = noRepeat;
+    }
+    return free[ESA.randInt(0, free.length - 1)];
+  };
+
+  /** Pops a side's queued events into free holes, within the active cap. */
+  BonkBooth.prototype.fill = function (side) {
+    var q = this.queue[side];
+    while (q.length) {
+      var ev = q[0];
+      var cap = ev.cap === 3 && !ev.third ? 2 : ev.cap;
+      if (this.targets[side].length >= cap) return;
+      var hole = this.freeHole(side);
+      if (hole < 0) return;
+      q.shift();
+      this.lastHole[side] = hole;
+      // CLUTCH: the trailing player's window on a normal target stretches a
+      // little. Bombs are never extended (that would be MORE danger).
+      var edge = this.clutch && ev.type === "normal" ? 1 + this.clutch.bonus(side) : 1;
+      this.targets[side].push({
+        side: side,
+        hole: hole,
+        type: ev.type,
+        phase: "tell",
+        t: 0,
+        tellFor: ev.tellFor * edge,
+        riseFor: ev.riseFor,
+        activeFor: ev.activeFor * edge,
+        retreatFor: ev.retreatFor,
+        stunFor: ev.stunFor,
+        cue: ev.cue,
+        victim: ev.victim,                // Solo: who pops up (versus: the rival)
+        rise: 0,
+        resolved: false,      // scored or bomb hit: hold up, then drop
+        attempted: false,     // a late swing already used THIS target
+        hitType: null,
+        reactT: 0
+      });
+    }
+  };
+
+  BonkBooth.prototype.schedule = function (dt) {
+    this.clock += dt;
+    if (this.clock < this.nextEventAt) return;
+    var ev = this.makeEvent();
+    for (var i = 0; i < this.sides.length; i++) {
+      var q = this.queue[this.sides[i]];
+      if (q.length < 3) q.push(ev);                 // same event object, read-only
+    }
+    this.nextEventAt = this.clock + curve("interval", ev.k);
+  };
+
+  /** One side's targets: tell -> rise -> active -> (stunned) -> retreat -> gone. */
+  BonkBooth.prototype.advance = function (side, dt) {
+    var list = this.targets[side];
+    for (var i = list.length - 1; i >= 0; i--) {
+      var t = list[i];
+      t.t += dt;
+      if (t.reactT > 0) t.reactT = Math.max(0, t.reactT - dt);
+      switch (t.phase) {
+        case "tell":
+          // The readable wind-up - fainter as the round goes on.
+          if (t.cue > 0.01) this.holeGlow[side][t.hole] = Math.max(this.holeGlow[side][t.hole], (t.t / t.tellFor) * t.cue);
+          if (t.t >= t.tellFor) { t.phase = "rise"; t.t = 0; }
+          break;
+        case "rise":
+          t.rise = ESA.easeOut(ESA.clamp(t.t / t.riseFor, 0, 1));
+          if (t.t >= t.riseFor) { t.phase = "active"; t.t = 0; t.rise = 1; }
+          break;
+        case "active":
+          t.rise = 1;
+          if (t.t >= t.activeFor) { t.phase = "retreat"; t.t = 0; }
+          break;
+        case "stunned":
+          // Held up after a successful hit so the hurt art actually reads.
+          t.rise = 1;
+          if (t.t >= t.stunFor) { t.phase = "retreat"; t.t = 0; }
+          break;
+        case "retreat":
+          var dur = t.resolved ? t.retreatFor * 0.6 : t.retreatFor;
+          t.rise = 1 - ESA.easeIn(ESA.clamp(t.t / dur, 0, 1));
+          if (t.t >= dur) list.splice(i, 1);       // gone - nothing stale is kept
+          break;
+      }
+    }
+    this.fill(side);
+  };
+
+  /** The target currently in a hole (at most one), or null. */
+  BonkBooth.prototype.targetAt = function (side, hole) {
+    var list = this.targets[side];
+    for (var i = 0; i < list.length; i++) if (list[i].hole === hole) return list[i];
+    return null;
   };
 
   /* ------------------------------------------------------------------ *
@@ -282,6 +392,8 @@
     for (var i = 0; i < this.sides.length; i++) {
       var side = this.sides[i];
       var idx = ESA.CONTROLS[side].booth.indexOf(code);
+      // Solo: one player, so the arrow keys / J K L are aliases too.
+      if (idx < 0 && this.single && SOLO_ALIASES[code] !== undefined) idx = SOLO_ALIASES[code];
       if (idx >= 0) this.attempt(side, idx);
     }
   };
@@ -311,41 +423,38 @@
   };
 
   /**
-   * Resolve one press / tap for `side` on `holeIndex`.
+   * Resolve one press / tap for `side` on `holeIndex` (V4.1).
    *
-   *   correct hole while the rival is up            +1  (uses the attempt)
-   *   bomb hole while the bomb is up                -2  (uses the attempt)
-   *   wrong hole, or a late press as it sinks       -1  (uses the attempt)
-   *   any press while the booth is empty (gap)      -1  (once per gap)
-   *   correct hole during the glow, before it rises  0  "EARLY" - not an attempt
-   *   anything after the attempt is used             ignored, no penalty
+   *   target up in that hole                         +1  (that target is done)
+   *   bomb up in that hole                           -2  (that bomb is done)
+   *   that hole is empty (a miss / wrong key)        -1
+   *   that hole's target is sinking (too late)       -1  (that target is done)
+   *   that hole is only glowing (before it rises)     0  "EARLY"
+   *   a target that was already hit / missed          ignored, no penalty
    *
-   * Because the FIRST press of an event decides it, mashing all three keys
-   * (or tapping all three holes) can't farm the right one: two of three
-   * orders lose a point and lock the event before the correct key lands.
-   * The lock is per player and per event, so it never blocks the next
-   * target or the other player.
+   * NO GLOBAL LOCKOUT: a miss costs its point and nothing else - the very
+   * next valid target (even one already up in another hole) can be hit at
+   * once. Attempts belong to each TARGET, so a hit target can never be
+   * scored twice, and mashing still loses: every empty hole you hit is -1.
    */
   BonkBooth.prototype.attempt = function (side, holeIndex) {
     if (this.state !== "playing") return;
-    var t = this.targets[side];
-    if (!t || t.attempted || t.resolved) return;
-
     var self = this;
     var at = function (dy) { return self.holePt(side, holeIndex, dy); };
     var cx = at(0).x;
 
-    if (t.phase === "gap") {
-      if (t.gapMissed) return;
-      t.gapMissed = true;
-      this.swing[side] = { hole: holeIndex, t: 0.24 };
-      this.penalise(side, holeIndex, "MISS");
-      return;
-    }
+    // Key bounce / an accidental double-tap on one hole is one press.
+    var last = this.pressAt[side][holeIndex];
+    this.pressAt[side][holeIndex] = this.clock;
+    if (this.clock - last < PRESS_DEBOUNCE) return;
 
-    if (t.phase === "tell" && holeIndex === t.hole) {
-      // Reading the glow is fine - just not yet. No penalty, no lock.
-      this.swing[side] = { hole: holeIndex, t: 0.24 };
+    this.swing[side] = { hole: holeIndex, t: 0.24 };   // the mallet always comes down
+    var t = this.targetAt(side, holeIndex);
+
+    if (t && (t.resolved || t.attempted)) return;      // already decided - never twice
+
+    if (t && t.phase === "tell") {
+      // Reading the glow is fine - just not yet. No penalty.
       this.fx.spawn({
         type: "text", x: cx, y: at(-44).y, vx: 0, vy: -40,
         gravity: 0, drag: 0.98, life: 0.4, font: 17,
@@ -354,17 +463,11 @@
       return;
     }
 
-    // Mallet comes down - the swing always reads.
-    this.swing[side] = { hole: holeIndex, t: 0.24 };
-    t.attempted = true;
-
-    var up = t.phase === "rise" || t.phase === "active" ||
-             (t.phase === "retreat" && t.rise >= LATE_GRACE_RISE);
-
-    if (!up || t.hole !== holeIndex) {
-      var late = t.phase === "retreat" && t.hole === holeIndex;
-      this.penalise(side, holeIndex, late ? "LATE"
-        : (this.touchLayout ? "WRONG HOLE" : "WRONG KEY"));
+    var up = !!t && (t.phase === "rise" || t.phase === "active" ||
+             (t.phase === "retreat" && t.rise >= LATE_GRACE_RISE));
+    if (!up) {
+      if (t) t.attempted = true;                       // too late for THIS target only
+      this.penalise(side, holeIndex, t ? "LATE" : "MISS");
       return;
     }
 
@@ -374,10 +477,9 @@
     t.t = 0;
 
     if (t.type === "bomb") {
-      // The worst mistake in the booth: -2, with a heavier hit than a wrong hole.
+      // The worst mistake in the booth: -2, with a heavier hit than a miss.
       t.hitType = "bomb";
-      this.score[side] -= BOMB_PENALTY;
-      ESA.UI.setScore(side, this.score[side]);
+      this.addScore(side, -BOMB_PENALTY);
       ESA.Audio.play("penalty");
       ESA.Stage.shake(16);
       ESA.Stage.flash(0.42, "#ff8f86");
@@ -402,8 +504,7 @@
 
     } else {
       t.hitType = "bonk";
-      this.score[side] += 1;
-      ESA.UI.setScore(side, this.score[side]);
+      this.addScore(side, 1);
       ESA.Audio.play("bonk");
       ESA.Stage.shake(7);
 
@@ -428,14 +529,20 @@
     }
   };
 
-  /** Wrong hole / key, late, or swinging at an empty booth: -1 and a red pop. */
+  /** Every score change goes through here (HUD + CLUTCH stay in step). */
+  BonkBooth.prototype.addScore = function (side, delta) {
+    this.score[side] += delta;
+    ESA.UI.setScore(side, this.score[side]);
+    if (this.clutch) this.clutch.update(this.score);
+  };
+
+  /** Empty hole, or too late: -1 and a red pop. Nothing is locked. */
   BonkBooth.prototype.penalise = function (side, holeIndex, label) {
     var self = this;
     var at = function (dy) { return self.holePt(side, holeIndex, dy); };
     var cx = at(0).x;
 
-    this.score[side] -= 1;
-    ESA.UI.setScore(side, this.score[side]);
+    this.addScore(side, -1);
     ESA.Audio.play("bonkMiss");
     this.holeMiss[side][holeIndex] = 1;
 
@@ -472,6 +579,7 @@
 
     if (this.state !== "playing") return;
 
+    this.schedule(dt);
     this.advance("p1", dt);
     if (!this.single) this.advance("p2", dt);
 
@@ -831,7 +939,7 @@
     g.restore();
   }
 
-  function drawKeycap(g, cx, label, color, pressed) {
+  function drawKeycap(g, cx, label, color, pressed, alias) {
     var y = HOLE_Y + 40 + (pressed ? 3 : 0);
     g.save();
     if (!pressed) {
@@ -855,6 +963,11 @@
     g.textAlign = "center";
     g.textBaseline = "middle";
     g.fillText(label, cx, y + 18);
+    if (alias) {
+      g.font = "700 12px " + ESA.FONT_DISPLAY;
+      g.fillStyle = "rgba(220,233,246,.7)";
+      g.fillText("or " + alias, cx, y + 50);
+    }
     g.restore();
   }
 
@@ -982,7 +1095,6 @@
     // Holes, back to front: back rim, character, front lip, keycap.
     for (var i = 0; i < this.sides.length; i++) {
       var side = this.sides[i];
-      var t = this.targets[side];
       var color = this.players[side].color;
       var labels = ESA.controlsFor(side, "booth").caps;
 
@@ -999,15 +1111,20 @@
         if (this.touchLayout) drawTapPad(ctx, cx, color, this.swing[side] && this.swing[side].hole === h);
         drawHoleBack(ctx, cx, glow, this.holeMiss[side][h]);
 
-        if (t && t.hole === h && t.rise > 0.001) {
-          this.drawOccupant(ctx, side, t, cx, now);
-        }
+        var t = this.targetAt(side, h);
+        if (t && t.rise > 0.001) this.drawOccupant(ctx, side, t, cx, now);
 
         drawHoleLip(ctx, cx);
 
         if (!this.touchLayout) {
           var pressed = ESA.Input.isDown(ESA.CONTROLS[side].booth[h]);
-          drawKeycap(ctx, cx, labels[h], color, pressed);
+          if (this.single) {
+            // Solo: the arrow-key alias is printed under each cap.
+            for (var ak in SOLO_ALIASES) if (SOLO_ALIASES[ak] === h && ESA.Input.isDown(ak)) pressed = true;
+            drawKeycap(ctx, cx, labels[h], color, pressed, SOLO_ALIAS_CAPS[h]);
+          } else {
+            drawKeycap(ctx, cx, labels[h], color, pressed);
+          }
         }
         ctx.restore();
       }
@@ -1024,7 +1141,33 @@
       }
     }
 
+    if (this.clutch) this.drawClutch(ctx, now);
     this.fx.draw(ctx);
+  };
+
+  /** A small, calm CLUTCH tag under the trailing player's name plate. */
+  BonkBooth.prototype.drawClutch = function (ctx, now) {
+    for (var i = 0; i < this.sides.length; i++) {
+      var side = this.sides[i], label = this.clutch.label(side);
+      if (!label) continue;
+      var px = this.touchLayout ? (side === "p1" ? W / 2 - 150 : W / 2 + 150) : (side === "p1" ? W * 0.25 : W * 0.75);
+      ctx.save();
+      ctx.globalAlpha = 0.78 + 0.12 * Math.sin(now / 420);
+      ctx.font = "800 10px " + ESA.FONT_DISPLAY;
+      ctx.letterSpacing = "2px";
+      var w = ctx.measureText(label).width + 18;
+      ESA.roundRect(ctx, px - w / 2, 133, w, 16, 8);
+      ctx.fillStyle = "rgba(7,23,40,.85)";
+      ctx.fill();
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = "#9fe3ff";
+      ctx.stroke();
+      ctx.fillStyle = "#9fe3ff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, px + 1, 141.5);
+      ctx.restore();
+    }
   };
 
   /** Draw whatever is currently in the hole, clipped to the opening. */
@@ -1059,9 +1202,11 @@
       }
 
       ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,.4)";
-      ctx.shadowBlur = 16;
-      ctx.shadowOffsetY = 4;
+      if (!ESA.Quality || ESA.Quality.fx.shadows) {
+        ctx.shadowColor = "rgba(0,0,0,.4)";
+        ctx.shadowBlur = 16;
+        ctx.shadowOffsetY = 4;
+      }
       // Quick crossfade into the hurt art right after the bonk lands.
       var blend = wasHit ? ESA.clamp((0.34 - t.reactT) / 0.09, 0, 1) : 0;
       ESA.drawSpriteBlend(ctx, victim, blend, cx, feetY, {
@@ -1084,17 +1229,17 @@
     title: "Bonk Booth",
     tagline: "Your rival pops out of three holes. Hit the matching key. Wrong key costs a point.",
     description: "Your rival pops out of your three holes. <b>Hit the key under the hole</b> " +
-                 "before they drop back down: <b>+1</b>. Wrong key: <b>−1</b> — one swing per pop-up, so mashing loses. " +
-                 "Leave bombs alone — hitting one is <b>−2</b>. It gets faster as the clock runs down.",
+                 "before they drop back down: <b>+1</b>. Empty hole or wrong key: <b>−1</b>, so mashing loses. " +
+                 "Leave bombs alone — hitting one is <b>−2</b>. It gets faster, and busier, as the clock runs down.",
     mode: MATCH_SECONDS + " seconds",
     icon: { symbol: "#icoMallet" },
     controls: "booth",
     touch: { movement: "none", actions: [], interaction: "directTap",
-             help: ["TAP YOUR RIVAL — +1", "WRONG HOLE — −1 · ONE TAP PER POP-UP", "BOMB — LEAVE IT ALONE (−2)"],
+             help: ["TAP YOUR RIVAL — +1", "EMPTY HOLE — −1", "BOMB — LEAVE IT ALONE (−2)"],
              tagline: "Your rival pops out of your three holes. Tap the right one. Wrong hole costs a point.",
              description: "Your rival pops out of the three holes on <b>your side of the screen</b>. " +
-                          "<b>Tap them</b> before they drop back down: <b>+1</b>. Wrong hole: <b>−1</b> — one tap per pop-up, so spamming loses. " +
-                          "Leave bombs alone — hitting one is <b>−2</b>. It gets faster as the clock runs down." },
+                          "<b>Tap them</b> before they drop back down: <b>+1</b>. Empty hole: <b>−1</b>, so spamming loses. " +
+                          "Leave bombs alone — hitting one is <b>−2</b>. It gets faster, and busier, as the clock runs down." },
     hud: { centerLabel: "Time", centerValue: String(MATCH_SECONDS), pips: 0 },
     accent: "#4fb7c9",
     canTie: true,
@@ -1105,10 +1250,10 @@
     solo: { mode: SOLO_SECONDS + " seconds",
             blurb: "Bonk every ESA member who pops up. Skip the bombs.", touchBlurb: "Tap every ESA member who pops up. Skip the bombs.",
             description: "A solo run. ESA members pop out of your three holes - <b>hit the key under the hole</b> before they " +
-                         "drop: <b>+1</b>. Wrong key: <b>−1</b>, one swing per pop-up. Leave bombs alone (<b>−2</b>). " +
+                         "drop: <b>+1</b> (the arrow keys work too). Empty hole: <b>−1</b>. Leave bombs alone (<b>−2</b>). " +
                          "It speeds up as the clock runs down. Beat your session best.",
             touchDescription: "A solo run. ESA members pop out of the three holes - <b>tap them</b> before they drop: <b>+1</b>. " +
-                              "Wrong hole: <b>−1</b>, one tap per pop-up. Leave bombs alone (<b>−2</b>). It speeds up as the clock runs down." },
+                              "Empty hole: <b>−1</b>. Leave bombs alone (<b>−2</b>). It speeds up as the clock runs down." },
     enabled: true,
     create: function (api, setup) { return new BonkBooth(api, setup); }
   });
